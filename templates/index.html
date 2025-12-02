@@ -8,176 +8,201 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <h1><i class="fas fa-robot"></i> YandexGPT Chat</h1>
-            <div class="api-status" id="apiStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Проверка подключения...</span>
-            </div>
-        </header>
+<div class="container">
+    <header class="header">
+        <h1><i class="fas fa-robot"></i> YandexGPT Chat</h1>
+        <div class="api-status" id="apiStatus">
+            <span class="status-dot"></span>
+            <span class="status-text">Проверка подключения...</span>
+        </div>
+    </header>
 
-        <div class="chat-container">
-            <div class="chat-history" id="chatHistory">
-                {% for message in history %}
-                    <div class="message {{ 'user-message' if message.role == 'user' else 'assistant-message' }}">
-                        <div class="message-header">
-                            <i class="fas {{ 'fa-user' if message.role == 'user' else 'fa-robot' }}"></i>
-                            <strong>{{ 'Вы' if message.role == 'user' else 'YandexGPT' }}</strong>
-                        </div>
-                        <div class="message-content">{{ message.content }}</div>
-                    </div>
-                {% endfor %}
-            </div>
-
-            <div class="input-area">
-                <div class="input-container">
-                    <textarea
-                        id="messageInput"
-                        placeholder="Введите ваше сообщение..."
-                        rows="3"
-                        onkeydown="if(event.keyCode===13&&!event.shiftKey){event.preventDefault();sendMessage();}"
-                    ></textarea>
-                    <button id="sendButton" onclick="sendMessage()">
-                        <i class="fas fa-paper-plane"></i> Отправить
-                    </button>
+    <div class="chat-container">
+        <div class="chat-history" id="chatHistory">
+            {% for message in history %}
+            <div class="message {{ 'user-message' if message.role == 'user' else 'assistant-message' }}">
+                <div class="message-header">
+                    <i class="fas {{ 'fa-user' if message.role == 'user' else 'fa-robot' }}"></i>
+                    <strong>{{ 'Вы' if message.role == 'user' else 'YandexGPT' }}</strong>
                 </div>
-                <div class="controls">
-                    <button id="clearButton" onclick="clearHistory()">
-                        <i class="fas fa-trash"></i> Очистить историю
-                    </button>
-                    <div class="model-info">
-                        <i class="fas fa-info-circle"></i> Модель: yandexgpt-latest
-                    </div>
-                </div>
+                <div class="message-content">{{ message.content }}</div>
             </div>
+            {% endfor %}
         </div>
 
-        <footer class="footer">
-            <p>Powered by YandexGPT API | Flask Frontend</p>
-        </footer>
-    </div>
-
-    <div id="loading" class="loading" style="display: none;">
-        <div class="loading-spinner"></div>
-        <p>YandexGPT думает...</p>
-    </div>
-
-    <script>
-        // Прокрутка к последнему сообщению
-        function scrollToBottom() {
-            const chatHistory = document.getElementById('chatHistory');
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-        }
-
-        // Отправка сообщения
-        async function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
-
-            if (!message) return;
-
-            // Добавляем сообщение пользователя в историю
-            addMessageToHistory('user', message);
-            input.value = '';
-            scrollToBottom();
-
-            // Показываем индикатор загрузки
-            showLoading(true);
-
-            try {
-                const response = await fetch('/send_message', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ message: message })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    // Добавляем ответ ассистента
-                    addMessageToHistory('assistant', data.response);
-                } else {
-                    addMessageToHistory('assistant', `Ошибка: ${data.error || 'Неизвестная ошибка'}`);
-                }
-            } catch (error) {
-                addMessageToHistory('assistant', 'Ошибка соединения с сервером');
-            } finally {
-                showLoading(false);
-                scrollToBottom();
-            }
-        }
-
-        // Добавление сообщения в историю
-        function addMessageToHistory(role, content) {
-            const chatHistory = document.getElementById('chatHistory');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${role === 'user' ? 'user-message' : 'assistant-message'}`;
-
-            const icon = role === 'user' ? 'fa-user' : 'fa-robot';
-            const sender = role === 'user' ? 'Вы' : 'YandexGPT';
-
-            messageDiv.innerHTML = `
-                <div class="message-header">
-                    <i class="fas ${icon}"></i>
-                    <strong>${sender}</strong>
+        <div class="input-area">
+            <div class="input-container">
+                    <textarea
+                            id="messageInput"
+                            placeholder="Введите ваше сообщение..."
+                            rows="3"
+                            onkeydown="if(event.keyCode===13&&!event.shiftKey){event.preventDefault();sendMessage();}"
+                    ></textarea>
+                <button id="sendButton" onclick="sendMessage()">
+                    <i class="fas fa-paper-plane"></i> Отправить
+                </button>
+            </div>
+            <div class="controls">
+                <button id="clearButton" onclick="clearHistory()">
+                    <i class="fas fa-trash"></i> Очистить историю
+                </button>
+                <div class="model-info">
+                    <i class="fas fa-info-circle"></i> Модель: yandexgpt-latest
                 </div>
-                <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
-            `;
+            </div>
+            <div class="form-check mb-3">
+                <input type="checkbox" class="form-check-input" id="jsonFormat">
+                <label class="form-check-label" for="jsonFormat">Получить ответ в формате JSON</label>
+            </div>
+        </div>
+    </div>
 
-            chatHistory.appendChild(messageDiv);
-        }
+    <footer class="footer">
+        <p>Powered by YandexGPT API | Flask Frontend</p>
+    </footer>
+</div>
 
-        // Очистка истории
-        async function clearHistory() {
-            if (!confirm('Вы уверены, что хотите очистить историю диалога?')) return;
+<div id="loading" class="loading" style="display: none;">
+    <div class="loading-spinner"></div>
+    <p>YandexGPT думает...</p>
+</div>
 
-            const response = await fetch('/clear_history', {
-                method: 'POST'
+<script>
+    // Прокрутка к последнему сообщению
+    function scrollToBottom() {
+        const chatHistory = document.getElementById('chatHistory');
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    // Отправка сообщения
+    async function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const message = input.value.trim();
+        const requireJson = document.getElementById('jsonFormat').checked;
+
+        if (!message) return;
+
+        // Добавляем сообщение пользователя в историю
+        addMessageToHistory('user', message);
+        input.value = '';
+        scrollToBottom();
+
+        // Показываем индикатор загрузки
+        showLoading(true);
+
+        try {
+            const response = await fetch('/send_message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: message,
+                    require_json: requireJson
+                })
             });
 
+            const data = await response.json();
+
             if (response.ok) {
-                document.getElementById('chatHistory').innerHTML = '';
-            }
-        }
+                // Если получен JSON и он был распарсен на сервере
+                if (requireJson && data.parsed) {
+                    // Красиво форматируем JSON для отображения
+                    const jsonStr = JSON.stringify(data.parsed, null, 2);
+                    const jsonHtml = `<details>
+                        <summary><strong>JSON ответ (кликните для раскрытия)</strong></summary>
+                        <pre><code>${jsonStr}</code></pre>
+                    </details>`;
+                    addMessageToHistory('assistant', jsonHtml);
 
-        // Показать/скрыть индикатор загрузки
-        function showLoading(show) {
-            document.getElementById('loading').style.display = show ? 'flex' : 'none';
-            document.getElementById('sendButton').disabled = show;
-        }
-
-        // Проверка статуса API
-        async function checkApiStatus() {
-            try {
-                const response = await fetch('/api_info');
-                const data = await response.json();
-
-                const statusDot = document.querySelector('.status-dot');
-                const statusText = document.querySelector('.status-text');
-
-                if (data.status === 'configured') {
-                    statusDot.style.backgroundColor = '#4CAF50';
-                    statusText.textContent = 'API подключено';
+                    // Также показываем текстовый ответ отдельно (опционально)
+                    if (data.parsed.response) {
+                        addMessageToHistory('assistant', `Текст ответа: ${data.parsed.response}`);
+                    }
                 } else {
-                    statusDot.style.backgroundColor = '#FF5252';
-                    statusText.textContent = 'API не настроено';
+                    // Обычный текстовый ответ
+                    addMessageToHistory('assistant', data.response);
                 }
-            } catch (error) {
-                console.error('Ошибка проверки статуса API:', error);
+            } else {
+                addMessageToHistory('assistant', `Ошибка: ${data.error || 'Неизвестная ошибка'}`);
             }
-        }
-
-        // Инициализация
-        document.addEventListener('DOMContentLoaded', function() {
-            checkApiStatus();
+        } catch (error) {
+            console.error('Ошибка:', error);
+            addMessageToHistory('assistant', 'Ошибка соединения с сервером');
+        } finally {
+            showLoading(false);
             scrollToBottom();
+        }
+    }
 
-            // Автофокус на поле ввода
-            document.getElementById('messageInput').focus();
+    // Добавление сообщения в историю
+    function addMessageToHistory(role, content) {
+        const chatHistory = document.getElementById('chatHistory');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role === 'user' ? 'user-message' : 'assistant-message'}`;
+
+        const icon = role === 'user' ? 'fa-user' : 'fa-robot';
+        const sender = role === 'user' ? 'Вы' : 'YandexGPT';
+
+        messageDiv.innerHTML = `
+            <div class="message-header">
+                <i class="fas ${icon}"></i>
+                <strong>${sender}</strong>
+            </div>
+            <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+        `;
+
+        chatHistory.appendChild(messageDiv);
+    }
+
+    // Очистка истории
+    async function clearHistory() {
+        if (!confirm('Вы уверены, что хотите очистить историю диалога?')) return;
+
+        const response = await fetch('/clear_history', {
+            method: 'POST'
         });
-    </script>
+
+        if (response.ok) {
+            document.getElementById('chatHistory').innerHTML = '';
+        }
+    }
+
+    // Показать/скрыть индикатор загрузки
+    function showLoading(show) {
+        document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        document.getElementById('sendButton').disabled = show;
+    }
+
+    // Проверка статуса API
+    async function checkApiStatus() {
+        try {
+            const response = await fetch('/api_info');
+            const data = await response.json();
+
+            const statusDot = document.querySelector('.status-dot');
+            const statusText = document.querySelector('.status-text');
+
+            if (data.status === 'configured') {
+                statusDot.style.backgroundColor = '#4CAF50';
+                statusText.textContent = 'API подключено';
+            } else {
+                statusDot.style.backgroundColor = '#FF5252';
+                statusText.textContent = 'API не настроено';
+            }
+        } catch (error) {
+            console.error('Ошибка проверки статуса API:', error);
+        }
+    }
+
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        checkApiStatus();
+        scrollToBottom();
+
+        // Автофокус на поле ввода
+        document.getElementById('messageInput').focus();
+    });
+</script>
 </body>
 </html>
