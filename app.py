@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
 from datetime import timedelta
 import logging
+import re
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,7 @@ def send_message():
     """Обработка отправки сообщения"""
     try:
         user_message = request.json.get('message', '').strip()
+        require_json = request.json.get('require_json', False)
 
         if not user_message:
             return jsonify({'error': 'Сообщение не может быть пустым'}), 400
@@ -51,12 +53,37 @@ def send_message():
         # Добавляем сообщение пользователя в историю
         chat_history.append({'role': 'user', 'text': user_message})
 
+        # Определяем системный промпт в зависимости от формата ответа
+        if require_json:
+            system_prompt = """Ты полезный ассистент. Всегда отвечай в формате JSON со следующей структурой:
+            {
+                "response": "Твой основной ответ пользователю",
+                "sentiment": "нейтральный/положительный/отрицательный",
+                "confidence": 0.95,
+                "entities": ["список", "извлеченных", "сущностей"],
+                "intent": "намерение_пользователя",
+                "suggestions": ["предложение1", "предложение2"] 
+            }
+            
+            Правила:
+            1. Всегда возвращай валидный JSON
+            2. Поле "response" должно содержать текстовый ответ пользователю
+            3. Поле "sentiment" должно быть одним из: "положительный", "нейтральный", "отрицательный"
+            4. Поле "confidence" - число от 0 до 1 (уверенность в ответе)
+            5. Поле "entities" - массив строк с ключевыми сущностями из запроса
+            6. Поле "intent" - распознанное намерение пользователя
+            7. Поле "suggestions" - массив предложений для продолжения диалога
+            
+            Не добавляй никаких дополнительных комментариев кроме JSON!"""
+        else:
+            system_prompt = 'Ты полезный ассистент. Отвечай вежливо и по существу.'
+
         # Подготавливаем системный промпт и сообщения для API
         # YandexGPT ожидает структуру с полем "text" а не "content"
         messages = [
             {
                 'role': 'system',
-                'text': 'Ты полезный ассистент. Отвечай вежливо и по существу.'
+                'text': system_prompt
             }
         ]
 
@@ -81,7 +108,7 @@ def send_message():
             'modelUri': f'gpt://{YANDEX_FOLDER_ID}/yandexgpt/latest',
             'completionOptions': {
                 'stream': False,
-                'temperature': 0.6,
+                'temperature': 0.3,  # Уменьшил температуру для более стабильного JSON
                 'maxTokens': 2000
             },
             'messages': messages
@@ -89,6 +116,7 @@ def send_message():
 
         # Логируем запрос (без ключа)
         logger.info(f"Sending request to YandexGPT API with modelUri: {payload['modelUri']}")
+        logger.info(f"Sending request to YandexGPT API with require_json={require_json}")
         logger.info(f"Messages count: {len(messages)}")
 
         # Отправляем запрос к YandexGPT
@@ -117,6 +145,48 @@ def send_message():
             # Если структура неожиданная, ищем текст ответа
             assistant_message = extract_message_from_response(result)
 
+        # Если требуется JSON, пытаемся распарсить
+        parsed_response = None
+        if require_json:
+            try:
+                # Пытаемся найти JSON в ответе (модель может добавить текст до/после JSON)
+                json_match = re.search(r'\{.*}', assistant_message, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    parsed_response = json.loads(json_str)
+
+                    # Проверяем обязательные поля
+                    if 'response' not in parsed_response:
+                        parsed_response['response'] = assistant_message
+
+                    # Сохраняем полный ответ в историю
+                    assistant_message = json.dumps(parsed_response, ensure_ascii=False)
+                else:
+                    # Если JSON не найден, создаем структуру с исходным текстом
+                    parsed_response = {
+                        "response": assistant_message,
+                        "sentiment": "нейтральный",
+                        "confidence": 0.5,
+                        "entities": [],
+                        "intent": "unknown",
+                        "suggestions": []
+                    }
+                    assistant_message = json.dumps(parsed_response, ensure_ascii=False)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing error: {str(e)}")
+                # Если не удалось распарсить, создаем JSON с ошибкой
+                parsed_response = {
+                    "response": assistant_message,
+                    "error": "Не удалось сгенерировать валидный JSON",
+                    "sentiment": "нейтральный",
+                    "confidence": 0.1,
+                    "entities": [],
+                    "intent": "unknown",
+                    "suggestions": []
+                }
+                assistant_message = json.dumps(parsed_response, ensure_ascii=False)
+
         # Добавляем ответ ассистента в историю
         chat_history.append({'role': 'assistant', 'text': assistant_message})
 
@@ -124,10 +194,17 @@ def send_message():
         session['chat_history'] = chat_history
         session.modified = True
 
-        return jsonify({
+        # Формируем ответ для клиента
+        response_data = {
             'response': assistant_message,
-            'history': chat_history
-        })
+            'history': chat_history,
+            'require_json': require_json
+        }
+
+        if parsed_response and require_json:
+            response_data['parsed'] = parsed_response
+
+        return jsonify(response_data)
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {str(e)}")
