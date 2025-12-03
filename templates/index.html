@@ -3,19 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat with YandexGPT</title>
+    <title>Универсальный YandexGPT Агент</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
 </head>
 <body>
 <div class="container">
     <header class="header">
-        <h1><i class="fas fa-robot"></i> YandexGPT Chat</h1>
+        <h1><i class="fas fa-robot"></i> Универсальный YandexGPT Агент</h1>
         <div class="api-status" id="apiStatus">
             <span class="status-dot"></span>
             <span class="status-text">Проверка подключения...</span>
         </div>
     </header>
+
+    <!-- Панель режимов работы -->
+    <div class="mode-panel">
+        <div class="mode-selector">
+            <h3><i class="fas fa-cogs"></i> Режимы работы:</h3>
+            <div class="mode-buttons">
+                <button class="mode-btn active" data-mode="default" onclick="setMode('default')">
+                    <i class="fas fa-comments"></i> Обычный чат
+                </button>
+                <button class="mode-btn" data-mode="json_format" onclick="setMode('json_format')">
+                    <i class="fas fa-code"></i> JSON Формат
+                </button>
+                <button class="mode-btn" data-mode="tz_collection" onclick="setMode('tz_collection')">
+                    <i class="fas fa-clipboard-list"></i> Сбор ТЗ
+                </button>
+            </div>
+        </div>
+
+        <div class="mode-info" id="modeInfo">
+            <div id="defaultInfo" class="mode-description active">
+                <i class="fas fa-info-circle"></i> Стандартный режим общения с ассистентом.
+            </div>
+            <div id="jsonInfo" class="mode-description">
+                <i class="fas fa-info-circle"></i> Все ответы будут в формате JSON для удобного парсинга.
+            </div>
+            <div id="tzInfo" class="mode-description">
+                <i class="fas fa-info-circle"></i> Режим сбора требований для Технического Задания.
+            </div>
+        </div>
+
+        <div class="session-info" id="sessionInfo">
+            <i class="fas fa-database"></i> Сообщений в истории: <span id="historyCount">0</span>
+            | Режим: <span id="currentMode">default</span>
+        </div>
+    </div>
 
     <div class="chat-container">
         <div class="chat-history" id="chatHistory">
@@ -23,186 +61,580 @@
             <div class="message {{ 'user-message' if message.role == 'user' else 'assistant-message' }}">
                 <div class="message-header">
                     <i class="fas {{ 'fa-user' if message.role == 'user' else 'fa-robot' }}"></i>
-                    <strong>{{ 'Вы' if message.role == 'user' else 'YandexGPT' }}</strong>
+                    <strong>{{ 'Вы' if message.role == 'user' else 'Ассистент' }}</strong>
+                    <span class="message-time">{{ loop.index }}</span>
                 </div>
-                <div class="message-content">{{ message.content }}</div>
+                <div class="message-content">{{ message.text|safe }}</div>
             </div>
             {% endfor %}
         </div>
 
         <div class="input-area">
+            <!-- Панель дополнительных опций -->
+            <div class="options-panel" id="optionsPanel">
+                <div class="option" id="jsonOption" style="display: none;">
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="jsonFormat">
+                        <label class="form-check-label" for="jsonFormat">
+                            <i class="fas fa-code"></i> Получить ответ в формате JSON
+                        </label>
+                    </div>
+                    <small class="form-text">Доступно только в обычном режиме</small>
+                </div>
+
+                <div class="option" id="tzStatus" style="display: none;">
+                    <div class="tz-status-indicator">
+                        <i class="fas fa-sync fa-spin"></i>
+                        <span>Сбор требований активен...</span>
+                    </div>
+                    <button class="btn-small" onclick="resetTZ()">
+                        <i class="fas fa-redo"></i> Сбросить ТЗ
+                    </button>
+                </div>
+
+                <div class="option" id="tzComplete" style="display: none;">
+                    <div class="tz-complete-indicator">
+                        <i class="fas fa-check-circle"></i>
+                        <span>ТЗ сформировано!</span>
+                    </div>
+                    <button class="btn-small btn-success" onclick="downloadTZ()">
+                        <i class="fas fa-download"></i> Скачать ТЗ
+                    </button>
+                </div>
+            </div>
+
+            <!-- Основная область ввода -->
             <div class="input-container">
-                    <textarea
-                            id="messageInput"
-                            placeholder="Введите ваше сообщение..."
-                            rows="3"
-                            onkeydown="if(event.keyCode===13&&!event.shiftKey){event.preventDefault();sendMessage();}"
-                    ></textarea>
+                <textarea
+                        id="messageInput"
+                        placeholder="Введите ваше сообщение..."
+                        rows="3"
+                        onkeydown="if(event.keyCode===13&&!event.shiftKey){event.preventDefault();sendMessage();}"
+                ></textarea>
                 <button id="sendButton" onclick="sendMessage()">
                     <i class="fas fa-paper-plane"></i> Отправить
                 </button>
             </div>
+
+            <!-- Панель управления -->
             <div class="controls">
                 <button id="clearButton" onclick="clearHistory()">
                     <i class="fas fa-trash"></i> Очистить историю
                 </button>
+                <button id="exportButton" onclick="exportHistory()">
+                    <i class="fas fa-file-export"></i> Экспорт
+                </button>
                 <div class="model-info">
-                    <i class="fas fa-info-circle"></i> Модель: yandexgpt-latest
+                    <i class="fas fa-brain"></i> Модель: yandexgpt-latest
                 </div>
-            </div>
-            <div class="form-check mb-3">
-                <input type="checkbox" class="form-check-input" id="jsonFormat">
-                <label class="form-check-label" for="jsonFormat">Получить ответ в формате JSON</label>
             </div>
         </div>
     </div>
 
+    <!-- Превиью ТЗ -->
+    <div id="tzPreview" class="tz-preview" style="display: none;">
+        <h3><i class="fas fa-file-code"></i> Предпросмотр ТЗ</h3>
+        <pre><code id="tzPreviewContent" class="language-json"></code></pre>
+    </div>
+
     <footer class="footer">
-        <p>Powered by YandexGPT API | Flask Frontend</p>
+        <p>Powered by YandexGPT API | Универсальный агент с поддержкой JSON и ТЗ</p>
     </footer>
 </div>
 
+<!-- Модальное окно экспорта -->
+<div id="exportModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <h3><i class="fas fa-file-export"></i> Экспорт истории</h3>
+        <textarea id="exportData" rows="10" readonly></textarea>
+        <div class="modal-actions">
+            <button onclick="copyExport()"><i class="fas fa-copy"></i> Копировать</button>
+            <button onclick="downloadExport()"><i class="fas fa-download"></i> Скачать</button>
+            <button class="btn-close" onclick="closeModal()">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- Индикатор загрузки -->
 <div id="loading" class="loading" style="display: none;">
     <div class="loading-spinner"></div>
-    <p>YandexGPT думает...</p>
+    <p id="loadingText">Ассистент думает...</p>
 </div>
 
 <script>
-    // Прокрутка к последнему сообщению
-    function scrollToBottom() {
-        const chatHistory = document.getElementById('chatHistory');
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-    }
+    // Текущее состояние
+let currentMode = '{{ chat_mode }}';
+let tzComplete = {{ 'true' if tz_complete else 'false' }};
+let isSendingMessage = false;
 
-    // Отправка сообщения
-    async function sendMessage() {
-        const input = document.getElementById('messageInput');
-        const message = input.value.trim();
-        const requireJson = document.getElementById('jsonFormat').checked;
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    checkApiStatus();
+    updateModeUI();
+    updateSessionInfo();
+    scrollToBottom();
+    document.getElementById('messageInput').focus();
 
-        if (!message) return;
+    // Подсветка кода в существующих сообщениях
+    document.querySelectorAll('pre code').forEach((block) => {
+        hljs.highlightElement(block);
+    });
+});
 
-        // Добавляем сообщение пользователя в историю
-        addMessageToHistory('user', message);
-        input.value = '';
-        scrollToBottom();
+// Обновление UI в зависимости от режима
+function updateModeUI() {
+    // Обновляем активные кнопки режимов
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.mode === currentMode) {
+            btn.classList.add('active');
+        }
+    });
 
-        // Показываем индикатор загрузки
-        showLoading(true);
+    // Обновляем описания режимов
+    document.querySelectorAll('.mode-description').forEach(desc => {
+        desc.classList.remove('active');
+    });
+    document.getElementById(currentMode + 'Info').classList.add('active');
 
-        try {
-            const response = await fetch('/send_message', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message: message,
-                    require_json: requireJson
-                })
-            });
+    // Обновляем дополнительные опции
+    const jsonOption = document.getElementById('jsonOption');
+    const tzStatus = document.getElementById('tzStatus');
+    const tzCompleteEl = document.getElementById('tzComplete');
+    const tzPreview = document.getElementById('tzPreview');
 
-            const data = await response.json();
+    if (currentMode === 'default') {
+        jsonOption.style.display = 'block';
+        tzStatus.style.display = 'none';
+        tzCompleteEl.style.display = 'none';
+        tzPreview.style.display = 'none';
+    } else if (currentMode === 'json_format') {
+        jsonOption.style.display = 'none';
+        tzStatus.style.display = 'none';
+        tzCompleteEl.style.display = 'none';
+        tzPreview.style.display = 'none';
+    } else if (currentMode === 'tz_collection') {
+        jsonOption.style.display = 'none';
 
-            if (response.ok) {
-                // Если получен JSON и он был распарсен на сервере
-                if (requireJson && data.parsed) {
-                    // Красиво форматируем JSON для отображения
-                    const jsonStr = JSON.stringify(data.parsed, null, 2);
-                    const jsonHtml = `<details>
-                        <summary><strong>JSON ответ (кликните для раскрытия)</strong></summary>
-                        <pre><code>${jsonStr}</code></pre>
-                    </details>`;
-                    addMessageToHistory('assistant', jsonHtml);
-
-                    // Также показываем текстовый ответ отдельно (опционально)
-                    if (data.parsed.response) {
-                        addMessageToHistory('assistant', `Текст ответа: ${data.parsed.response}`);
-                    }
-                } else {
-                    // Обычный текстовый ответ
-                    addMessageToHistory('assistant', data.response);
-                }
-            } else {
-                addMessageToHistory('assistant', `Ошибка: ${data.error || 'Неизвестная ошибка'}`);
-            }
-        } catch (error) {
-            console.error('Ошибка:', error);
-            addMessageToHistory('assistant', 'Ошибка соединения с сервером');
-        } finally {
-            showLoading(false);
-            scrollToBottom();
+        if (tzComplete) {
+            tzStatus.style.display = 'none';
+            tzCompleteEl.style.display = 'block';
+            tzPreview.style.display = 'block';
+            updateTZPreview();
+        } else {
+            tzStatus.style.display = 'block';
+            tzCompleteEl.style.display = 'none';
+            tzPreview.style.display = 'none';
         }
     }
 
-    // Добавление сообщения в историю
-    function addMessageToHistory(role, content) {
-        const chatHistory = document.getElementById('chatHistory');
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${role === 'user' ? 'user-message' : 'assistant-message'}`;
+    // Обновляем placeholder в зависимости от режима
+    const input = document.getElementById('messageInput');
+    if (currentMode === 'tz_collection') {
+        input.placeholder = 'Отвечайте на вопросы аналитика для сбора требований...';
+    } else if (currentMode === 'json_format') {
+        input.placeholder = 'Введите сообщение (ответ будет в JSON формате)...';
+    } else {
+        input.placeholder = 'Введите ваше сообщение...';
+    }
+}
 
-        const icon = role === 'user' ? 'fa-user' : 'fa-robot';
-        const sender = role === 'user' ? 'Вы' : 'YandexGPT';
+// Установка режима работы
+async function setMode(mode) {
+    if (currentMode === mode || isSendingMessage) return;
 
-        messageDiv.innerHTML = `
-            <div class="message-header">
-                <i class="fas ${icon}"></i>
-                <strong>${sender}</strong>
-            </div>
-            <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
-        `;
+    showLoading(true, 'Смена режима...');
+    try {
+        const response = await fetch('/set_mode', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ mode: mode })
+        });
 
-        chatHistory.appendChild(messageDiv);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        currentMode = data.mode;
+        tzComplete = false;
+
+        // Обновляем историю на клиенте
+        document.getElementById('chatHistory').innerHTML = '';
+
+        // Добавляем приветственное сообщение для режима ТЗ
+        if (mode === 'tz_collection') {
+            addMessageToHistory('assistant', 'Здравствуйте! Я помогу вам составить Техническое Задание. Расскажите, пожалуйста, о вашем проекте.');
+        }
+
+        updateModeUI();
+        updateSessionInfo();
+
+    } catch (error) {
+        console.error('Ошибка при смене режима:', error);
+        // Не показываем alert при ошибке - просто обновляем статус
+        updateSessionInfo();
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Завершить сбор ТЗ вручную
+async function manualCompleteTZ() {
+    if (!confirm('Завершить сбор требований и сформировать ТЗ на основе текущей информации?')) return;
+
+    showLoading(true, 'Формирование ТЗ...');
+    try {
+        // Отправляем специальное сообщение для завершения
+        const response = await fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: 'Вся информация собрана. Пожалуйста, сформируй финальное ТЗ в формате JSON.'
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.tz_complete) {
+            tzComplete = true;
+            updateModeUI();
+            addMessageToHistory('assistant', data.response);
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        addMessageToHistory('assistant', 'Ошибка при формировании ТЗ. Попробуйте еще раз.');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Выйти из режима ТЗ
+async function endTzMode() {
+    if (isSendingMessage) return;
+
+    const response = await fetch('/end_tz_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    });
+
+    if (response.ok) {
+        currentMode = 'default';
+        tzComplete = false;
+        updateModeUI();
+        addMessageToHistory('assistant', 'Режим сбора ТЗ завершен. Возвращаюсь в обычный режим.');
+    }
+}
+
+// Показать превью ТЗ
+async function updateTZPreview(tzData = null) {
+    if (!tzData) {
+        // Получаем данные с сервера
+        try {
+            const response = await fetch('/get_session_info');
+            if (response.ok) {
+                const data = await response.json();
+                tzData = data.tz_data;
+            }
+        } catch (error) {
+            console.error('Ошибка получения данных ТЗ:', error);
+            return;
+        }
     }
 
-    // Очистка истории
-    async function clearHistory() {
-        if (!confirm('Вы уверены, что хотите очистить историю диалога?')) return;
+    if (tzData) {
+        const preview = document.getElementById('tzPreview');
+        const content = document.getElementById('tzPreviewContent');
 
+        content.textContent = JSON.stringify(tzData, null, 2);
+        preview.style.display = 'block';
+        hljs.highlightElement(content);
+    }
+}
+
+// Скачать ТЗ
+async function downloadTZ() {
+    try {
+        const response = await fetch('/get_session_info');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (data.tz_data) {
+            const jsonStr = JSON.stringify(data.tz_data, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ТЗ_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    } catch (error) {
+        console.error('Ошибка скачивания ТЗ:', error);
+        alert('Ошибка при скачивании ТЗ');
+    }
+}
+
+// Отправка сообщения
+async function sendMessage() {
+    if (isSendingMessage) return;
+
+    const input = document.getElementById('messageInput');
+    const message = input.value.trim();
+    const requireJson = currentMode === 'default' && document.getElementById('jsonFormat').checked;
+
+    if (!message) return;
+
+    // Добавляем сообщение пользователя в историю
+    addMessageToHistory('user', message);
+    input.value = '';
+    scrollToBottom();
+
+    // Показываем индикатор загрузки
+    const loadingText = currentMode === 'tz_collection' ? 'Аналитик собирает требования...' : 'Ассистент думает...';
+    showLoading(true, loadingText);
+
+    isSendingMessage = true;
+
+    try {
+        const response = await fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: message,
+                require_json: requireJson
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Обновляем состояние
+        if (data.tz_complete !== undefined) {
+            tzComplete = data.tz_complete;
+        }
+        if (data.chat_mode) {
+            currentMode = data.chat_mode;
+        }
+
+        // Добавляем ответ ассистента
+        addMessageToHistory('assistant', data.response);
+
+        // Обновляем UI
+        updateModeUI();
+        updateSessionInfo();
+
+        // Если есть TZ данные, обновляем превью
+        if (data.tz_data) {
+            updateTZPreview(data.tz_data);
+        }
+
+    } catch (error) {
+        console.error('Ошибка отправки сообщения:', error);
+        // Удаляем последнее сообщение пользователя (оно уже добавлено)
+        const chatHistory = document.getElementById('chatHistory');
+        const lastMessage = chatHistory.lastChild;
+        if (lastMessage && lastMessage.classList.contains('user-message')) {
+            chatHistory.removeChild(lastMessage);
+        }
+    } finally {
+        showLoading(false);
+        scrollToBottom();
+        isSendingMessage = false;
+    }
+}
+
+// Сброс ТЗ
+async function resetTZ() {
+    if (!confirm('Сбросить сбор ТЗ и начать заново?')) return;
+
+    await setMode('default');
+    await setMode('tz_collection');
+}
+
+// Экспорт истории
+async function exportHistory() {
+    try {
+        const response = await fetch('/get_session_info');
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        const exportData = {
+            session_info: data,
+            chat_history: Array.from(document.querySelectorAll('.message')).map(msg => ({
+                sender: msg.querySelector('strong').textContent,
+                content: msg.querySelector('.message-content').textContent,
+                type: msg.classList.contains('user-message') ? 'user' : 'assistant'
+            }))
+        };
+
+        document.getElementById('exportData').value = JSON.stringify(exportData, null, 2);
+        document.getElementById('exportModal').style.display = 'block';
+    } catch (error) {
+        console.error('Ошибка экспорта:', error);
+        alert('Ошибка при экспорте истории');
+    }
+}
+
+// Копировать экспорт
+function copyExport() {
+    const textarea = document.getElementById('exportData');
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        alert('Скопировано в буфер обмена!');
+    } catch (error) {
+        console.error('Ошибка копирования:', error);
+    }
+}
+
+// Скачать экспорт
+function downloadExport() {
+    const data = document.getElementById('exportData').value;
+    if (!data) return;
+
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat_export_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Закрыть модальное окно
+function closeModal() {
+    document.getElementById('exportModal').style.display = 'none';
+}
+
+// Добавление сообщения в историю
+function addMessageToHistory(role, content) {
+    const chatHistory = document.getElementById('chatHistory');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role === 'user' ? 'user-message' : 'assistant-message'}`;
+
+    const icon = role === 'user' ? 'fa-user' : 'fa-robot';
+    const sender = role === 'user' ? 'Вы' : 'Ассистент';
+
+    messageDiv.innerHTML = `
+        <div class="message-header">
+            <i class="fas ${icon}"></i>
+            <strong>${sender}</strong>
+            <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+        </div>
+        <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+    `;
+
+    chatHistory.appendChild(messageDiv);
+
+    // Подсветка кода в сообщениях
+    setTimeout(() => {
+        messageDiv.querySelectorAll('code').forEach((block) => {
+            hljs.highlightElement(block);
+        });
+    }, 100);
+
+    updateSessionInfo();
+}
+
+// Обновление информации о сессии
+async function updateSessionInfo() {
+    try {
+        const response = await fetch('/get_session_info');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        document.getElementById('historyCount').textContent = data.history_length;
+        document.getElementById('currentMode').textContent = data.chat_mode;
+    } catch (error) {
+        console.error('Ошибка обновления информации о сессии:', error);
+    }
+}
+
+// Очистка истории
+async function clearHistory() {
+    if (!confirm('Вы уверены, что хотите очистить историю диалога?')) return;
+
+    try {
         const response = await fetch('/clear_history', {
             method: 'POST'
         });
 
         if (response.ok) {
             document.getElementById('chatHistory').innerHTML = '';
+            tzComplete = false;
+            updateModeUI();
+            updateSessionInfo();
+        }
+    } catch (error) {
+        console.error('Ошибка очистки истории:', error);
+    }
+}
+
+// Показать/скрыть индикатор загрузки
+function showLoading(show, text = 'Ассистент думает...') {
+    document.getElementById('loading').style.display = show ? 'flex' : 'none';
+    document.getElementById('loadingText').textContent = text;
+    document.getElementById('sendButton').disabled = show;
+}
+
+// Проверка статуса API
+async function checkApiStatus() {
+    try {
+        const response = await fetch('/api_info');
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        const statusDot = document.querySelector('.status-dot');
+        const statusText = document.querySelector('.status-text');
+
+        if (data.status === 'configured') {
+            statusDot.style.backgroundColor = '#4CAF50';
+            statusText.textContent = 'API подключено';
+        } else {
+            statusDot.style.backgroundColor = '#FF5252';
+            statusText.textContent = 'API не настроено';
+        }
+    } catch (error) {
+        console.error('Ошибка проверки статуса API:', error);
+    }
+}
+
+// Прокрутка к последнему сообщению
+function scrollToBottom() {
+    const chatHistory = document.getElementById('chatHistory');
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+// Закрытие модального окна при клике вне его
+window.onclick = function(event) {
+    const modal = document.getElementById('exportModal');
+    if (event.target === modal) {
+        closeModal();
+    }
+};
+
+// Обработка нажатия клавиши Enter (с Shift для новой строки)
+document.getElementById('messageInput').addEventListener('keydown', function(event) {
+    if (event.keyCode === 13 && !event.shiftKey) {
+        event.preventDefault();
+        if (!isSendingMessage) {
+            sendMessage();
         }
     }
-
-    // Показать/скрыть индикатор загрузки
-    function showLoading(show) {
-        document.getElementById('loading').style.display = show ? 'flex' : 'none';
-        document.getElementById('sendButton').disabled = show;
-    }
-
-    // Проверка статуса API
-    async function checkApiStatus() {
-        try {
-            const response = await fetch('/api_info');
-            const data = await response.json();
-
-            const statusDot = document.querySelector('.status-dot');
-            const statusText = document.querySelector('.status-text');
-
-            if (data.status === 'configured') {
-                statusDot.style.backgroundColor = '#4CAF50';
-                statusText.textContent = 'API подключено';
-            } else {
-                statusDot.style.backgroundColor = '#FF5252';
-                statusText.textContent = 'API не настроено';
-            }
-        } catch (error) {
-            console.error('Ошибка проверки статуса API:', error);
-        }
-    }
-
-    // Инициализация
-    document.addEventListener('DOMContentLoaded', function() {
-        checkApiStatus();
-        scrollToBottom();
-
-        // Автофокус на поле ввода
-        document.getElementById('messageInput').focus();
-    });
+});
 </script>
 </body>
 </html>

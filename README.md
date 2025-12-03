@@ -10,3 +10,9 @@ video - https://disk.yandex.ru/d/Dy2vlK_GDHlfyQ
 ![](res/task2.png)
 
 video - https://disk.yandex.ru/d/q3oH8Kjt8o2f8A
+
+## Task #3
+
+![](res/task3.png)
+
+video - https://disk.yandex.ru/d/cQh5-AHWQsGO_A
