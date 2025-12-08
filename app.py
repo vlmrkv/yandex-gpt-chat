@@ -137,6 +137,8 @@ def init_session():
         session['current_role_name'] = 'Обычный ассистент'
     if 'last_system_prompt' not in session:
         session['last_system_prompt'] = SYSTEM_PROMPTS['default']
+    if 'temperature' not in session:
+        session['temperature'] = "0.7"  # Сохраняем как строку для совместимости с select
 
 
 @app.route('/')
@@ -147,6 +149,7 @@ def index():
                            history=session['chat_history'],
                            chat_mode=session['chat_mode'],
                            tz_complete=session['tz_complete'],
+                           temperature=session['temperature'],
                            current_role=session.get('current_role_name', 'Обычный ассистент'))
 
 
@@ -158,10 +161,25 @@ def send_message():
         user_message = request.json.get('message', '').strip()
         require_json = request.json.get('require_json', False)
 
+        # Получаем температуру из запроса
+        temperature = request.json.get('temperature')
+        if temperature is not None:
+            try:
+                # Преобразуем в float и ограничиваем в допустимых пределах YandexGPT API (0-1.0)
+                temperature_val = float(temperature)
+                temperature_val = max(0.0, min(1.0, temperature_val))  # Максимум 1.0 для YandexGPT
+            except (ValueError, TypeError):
+                temperature_val = session.get('temperature', 0.7)
+        else:
+            temperature_val = session.get('temperature', 0.7)
+
         if not user_message:
             return jsonify({'error': 'Сообщение не может быть пустым'}), 400
 
         init_session()
+
+        # Сохраняем температуру в сессии (сохраняем исходное значение, а не ограниченное)
+        session['temperature'] = temperature_val
 
         # Проверяем, является ли сообщение командой для смены роли
         if user_message.lower().startswith('/role '):
@@ -245,38 +263,49 @@ def send_message():
         }
 
         # Настраиваем параметры в зависимости от режима
+        # Важно: не изменяем температуру, выбранную пользователем, если она не равна 0
         if actual_mode == 'json_format':
-            temperature = 0.3
+            # Для JSON формата используем низкую температуру для более структурированных ответов
+            # Но если пользователь выбрал 0, оставляем 0
+            if temperature_val > 0.3:
+                temperature_val = 0.3
             max_tokens = 1500
         elif actual_mode == 'tz_collection':
-            temperature = 0.4
+            # Для сбора ТЗ умеренная температура
+            # Но если пользователь выбрал 0, оставляем 0
+            if temperature_val > 0.4:
+                temperature_val = 0.4
             max_tokens = 2000
         elif session.get('custom_system_prompt'):
             # Для кастомных ролей используем умеренную температуру
-            temperature = 0.5
             max_tokens = 2000
         else:
-            temperature = 0.4
             max_tokens = 1500
 
         payload = {
             'modelUri': f'gpt://{YANDEX_FOLDER_ID}/yandexgpt/latest',
             'completionOptions': {
                 'stream': False,
-                'temperature': temperature,
+                'temperature': temperature_val,
                 'maxTokens': max_tokens
             },
             'messages': messages
         }
 
         # Логируем запрос
-        logger.info(f"Chat mode: {actual_mode}, Messages in request: {len(messages)}")
+        logger.info(f"Chat mode: {actual_mode}, Temperature: {temperature_val}, Messages in request: {len(messages)}")
 
         # Отправляем запрос к YandexGPT
         response = requests.post(YANDEX_API_URL, headers=headers, json=payload, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"API Error {response.status_code}: {response.text}")
+            # Пробуем получить больше информации об ошибке
+            try:
+                error_details = response.json()
+                logger.error(f"API Error details: {error_details}")
+            except:
+                pass
             return jsonify({'error': f'Ошибка API: {response.status_code}'}), 500
 
         # Парсим ответ
@@ -327,6 +356,7 @@ def send_message():
                             'tz_data': tz_data,
                             'history': chat_history,
                             'chat_mode': chat_mode,
+                            'temperature': temperature_val,
                             'require_json': require_json,
                             'current_role': session.get('current_role_name', 'Обычный ассистент')
                         })
@@ -392,6 +422,7 @@ def send_message():
             'response': final_assistant_message,
             'history': chat_history,
             'chat_mode': chat_mode,
+            'temperature': temperature_val,
             'require_json': require_json,
             'tz_complete': session.get('tz_complete', False),
             'current_role': session.get('current_role_name', 'Обычный ассистент'),
@@ -405,7 +436,7 @@ def send_message():
 
         # Логируем полный ответ
         logger.info(
-            f"Отправляем ответ: history_count={len(chat_history)}, current_role={session.get('current_role_name')}")
+            f"Отправляем ответ: history_count={len(chat_history)}, temperature={temperature_val}, current_role={session.get('current_role_name')}")
 
         return jsonify(response_data)
 
@@ -800,6 +831,7 @@ def get_session_info():
 
     return jsonify({
         'chat_mode': session.get('chat_mode', 'default'),
+        'temperature': session.get('temperature', 0.7),
         'tz_complete': session.get('tz_complete', False),
         'tz_data': session.get('tz_data'),
         'history_length': len(chat_history),
