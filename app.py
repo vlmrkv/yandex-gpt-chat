@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, session, app
+from flask import Flask, render_template, request, jsonify, session
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +29,7 @@ YANDEX_API_URL = 'https://llm.api.cloud.yandex.net/foundationModels/v1/completio
 if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
     logger.warning("⚠️ Внимание: YANDEX_API_KEY и YANDEX_FOLDER_ID не установлены в .env файле")
 
-# Системные промпты для разных режимов
+# Базовые системные промпты для разных режимов
 SYSTEM_PROMPTS = {
     'default': 'Ты полезный ассистент. Отвечай вежливо и по существу.',
 
@@ -124,13 +124,19 @@ def init_session():
     if 'chat_history' not in session:
         session['chat_history'] = []
     if 'chat_mode' not in session:
-        session['chat_mode'] = 'default'  # default, json, tz_collection
+        session['chat_mode'] = 'default'
     if 'tz_data' not in session:
         session['tz_data'] = None
     if 'tz_complete' not in session:
         session['tz_complete'] = False
     if 'session_id' not in session:
         session['session_id'] = str(uuid.uuid4())
+    if 'custom_system_prompt' not in session:
+        session['custom_system_prompt'] = None
+    if 'current_role_name' not in session:
+        session['current_role_name'] = 'Обычный ассистент'
+    if 'last_system_prompt' not in session:
+        session['last_system_prompt'] = SYSTEM_PROMPTS['default']
 
 
 @app.route('/')
@@ -140,7 +146,8 @@ def index():
     return render_template('index.html',
                            history=session['chat_history'],
                            chat_mode=session['chat_mode'],
-                           tz_complete=session['tz_complete'])
+                           tz_complete=session['tz_complete'],
+                           current_role=session.get('current_role_name', 'Обычный ассистент'))
 
 
 @app.route('/send_message', methods=['POST'])
@@ -155,6 +162,26 @@ def send_message():
             return jsonify({'error': 'Сообщение не может быть пустым'}), 400
 
         init_session()
+
+        # Проверяем, является ли сообщение командой для смены роли
+        if user_message.lower().startswith('/role '):
+            return handle_role_command(user_message)
+
+        # Проверяем, является ли сообщение командой для установки кастомного промпта
+        elif user_message.lower().startswith('/system '):
+            return handle_system_command(user_message)
+
+        # Проверяем, является ли сообщение командой для показа текущей роли
+        elif user_message.lower() in ['/role', '/current', '/whoami']:
+            return show_current_role()
+
+        # Проверяем, является ли сообщение командой для сброса роли
+        elif user_message.lower() in ['/reset', '/default', '/clearrole']:
+            return reset_role()
+
+        # Проверяем, является ли сообщение командой помощи
+        elif user_message.lower() in ['/help', '/commands', '/?']:
+            return show_help()
 
         # Получаем текущий режим чата
         chat_mode = session.get('chat_mode', 'default')
@@ -173,8 +200,7 @@ def send_message():
             }), 400
 
         # Определяем фактический режим работы
-        # Если пользователь запросил JSON, но не в режиме ТЗ, используем JSON режим
-        if require_json and chat_mode != 'tz_collection':
+        if require_json and chat_mode not in ['tz_collection']:
             actual_mode = 'json_format'
         else:
             actual_mode = chat_mode
@@ -182,18 +208,31 @@ def send_message():
         # Получаем историю диалога из сессии
         chat_history = session.get('chat_history', [])
 
-        # Добавляем сообщение пользователя в историю
+        # Добавляем сообщение пользователя в историю (только user сообщения)
         chat_history.append({'role': 'user', 'text': user_message})
 
         # Выбираем системный промпт в зависимости от режима
-        system_prompt = SYSTEM_PROMPTS.get(actual_mode, SYSTEM_PROMPTS['default'])
+        if session.get('custom_system_prompt'):
+            system_prompt = session['custom_system_prompt']
+        else:
+            system_prompt = SYSTEM_PROMPTS.get(actual_mode, SYSTEM_PROMPTS['default'])
+
+        # Сохраняем текущий промпт для будущих запросов
+        session['last_system_prompt'] = system_prompt
 
         # Подготавливаем сообщения для API
         messages = [{'role': 'system', 'text': system_prompt}]
 
-        # Добавляем историю диалога
+        # Добавляем историю диалога (фильтруем только user и assistant сообщения)
         max_messages = 20 if actual_mode == 'tz_collection' else 15
-        for msg in chat_history[-max_messages:]:
+        # Фильтруем только сообщения пользователя и ассистента (игнорируем system)
+        filtered_history = []
+        for msg in chat_history:
+            if msg['role'] in ['user', 'assistant']:
+                filtered_history.append(msg)
+
+        # Берем только последние сообщения для контекста
+        for msg in filtered_history[-max_messages:]:
             messages.append({
                 'role': msg['role'],
                 'text': msg['text']
@@ -206,8 +245,19 @@ def send_message():
         }
 
         # Настраиваем параметры в зависимости от режима
-        temperature = 0.3 if actual_mode == 'json_format' else 0.4
-        max_tokens = 1500 if actual_mode == 'tz_collection' else 2000
+        if actual_mode == 'json_format':
+            temperature = 0.3
+            max_tokens = 1500
+        elif actual_mode == 'tz_collection':
+            temperature = 0.4
+            max_tokens = 2000
+        elif session.get('custom_system_prompt'):
+            # Для кастомных ролей используем умеренную температуру
+            temperature = 0.5
+            max_tokens = 2000
+        else:
+            temperature = 0.4
+            max_tokens = 1500
 
         payload = {
             'modelUri': f'gpt://{YANDEX_FOLDER_ID}/yandexgpt/latest',
@@ -220,7 +270,7 @@ def send_message():
         }
 
         # Логируем запрос
-        logger.info(f"Chat mode: {actual_mode}, Require JSON: {require_json}")
+        logger.info(f"Chat mode: {actual_mode}, Messages in request: {len(messages)}")
 
         # Отправляем запрос к YandexGPT
         response = requests.post(YANDEX_API_URL, headers=headers, json=payload, timeout=60)
@@ -277,7 +327,8 @@ def send_message():
                             'tz_data': tz_data,
                             'history': chat_history,
                             'chat_mode': chat_mode,
-                            'require_json': require_json
+                            'require_json': require_json,
+                            'current_role': session.get('current_role_name', 'Обычный ассистент')
                         })
                     else:
                         # Если JSON не найден, удаляем маркер и продолжаем
@@ -317,7 +368,7 @@ def send_message():
                 parsed_response = {
                     "response": assistant_message,
                     "error": "Не удалось сгенерировать валидный JSON",
-                    "sentiment": "нейтральный",
+                    "sentiment": "neutral",
                     "confidence": 0.1,
                     "entities": [],
                     "intent": "unknown",
@@ -342,7 +393,9 @@ def send_message():
             'history': chat_history,
             'chat_mode': chat_mode,
             'require_json': require_json,
-            'tz_complete': session.get('tz_complete', False)
+            'tz_complete': session.get('tz_complete', False),
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(chat_history)
         }
 
         if parsed_response:
@@ -351,7 +404,8 @@ def send_message():
             response_data['tz_data'] = session['tz_data']
 
         # Логируем полный ответ
-        logger.info(f"Отправляем ответ: {json.dumps(response_data, ensure_ascii=False)}")
+        logger.info(
+            f"Отправляем ответ: history_count={len(chat_history)}, current_role={session.get('current_role_name')}")
 
         return jsonify(response_data)
 
@@ -380,16 +434,253 @@ def extract_message_from_response(result):
         return "Ошибка при обработке ответа от модели."
 
 
+def handle_role_command(user_message):
+    """Обработка команды для смены роли"""
+    try:
+        # Извлекаем название роли из команды
+        role_text = user_message[6:].strip()  # Убираем "/role "
+
+        # Предопределенные роли с их промптами
+        predefined_roles = {
+            'инженер': {
+                'prompt': 'Ты — инженер-прагматик с 20-летним стажем. Ты ненавидишь расплывчатые формулировки, требуешь точности и конкретики. Ты веришь только данным, логике и проверенным решениям. Твои ответы структурированы, ты любишь списки "за" и "против". Ты всегда ищешь подвох и скрытые риски в любой идее. Твой девиз: "Если что-то работает, не трогай это. Если не работает — найди спецификацию".',
+                'name': 'Инженер'
+            },
+
+            'режиссер': {
+                'prompt': 'Ты — знаменитый режиссёр с безграничной фантазией. Ты видишь мир через призму кино, метафор и архетипов. Твои ответы полны визуальных образов, ты мыслишь историями и персонажами. Ты обожаешь гиперболу, драматизацию и неожиданные повороты. Технические детали для тебя лишь фон для большой человеческой драмы. Твой главный вопрос всегда: "А где здесь конфликт и эмоция?".',
+                'name': 'Режиссер'
+            },
+
+            'бабушка': {
+                'prompt': 'Ты — добрая, мудрая бабушка, которая повидала многое на своём веку. Ты говоришь просто, с теплотой и лёгкой грустью. Ты веришь в народную мудрость, интуицию и важность простых человеческих ценностей: семья, покой, доброта. Ты любишь вспоминать аналогии из жизни, давать утешительные и практические советы. Технологии ты оцениваешь с точки зрения того, делают ли они людей счастливее. В твоих ответах всегда есть лёгкий налёт ностальгии.',
+                'name': 'Бабушка'
+            },
+
+            'ученый': {
+                'prompt': 'Ты — педантичный ученый-исследователь. Твои ответы строго научны, содержат ссылки на исследования, статистику и факты. Ты избегаешь субъективных оценок, оперируешь только проверенными данными. Всегда указываешь степень достоверности информации и возможные погрешности.',
+                'name': 'Ученый'
+            },
+
+            'философ': {
+                'prompt': 'Ты — глубокий философ, размышляющий о фундаментальных вопросах бытия. Твои ответы содержат много вопросов, парадоксов и ссылок на философские учения. Ты видишь проблему с разных сторон и не даешь однозначных ответов, а приглашаешь к размышлению.',
+                'name': 'Философ'
+            },
+
+            'юморист': {
+                'prompt': 'Ты — остроумный комик, который находит смешное в любой ситуации. Твои ответы полны шуток, иронии и сарказма. Даже на серьезные вопросы ты отвечаешь с юмором, но при этом можешь донести важную мысль через призму комедии.',
+                'name': 'Юморист'
+            },
+
+            'детектив': {
+                'prompt': 'Ты — проницательный детектив в стиле нуар. Ты видишь скрытые мотивы, находишь связи между, казалось бы, несвязанными фактами. Твои ответы полны подозрений, вопросов и поиска истины. Ты всегда скептически относишься к поверхностным объяснениям.',
+                'name': 'Детектив'
+            }
+        }
+
+        # Ищем совпадение
+        matched_role = None
+        role_name = None
+
+        for key, value in predefined_roles.items():
+            if key.startswith(role_text.lower()) or role_text.lower() in key:
+                matched_role = value
+                role_name = value['name']
+                break
+
+        if not matched_role:
+            # Если роль не найдена, возвращаем список доступных ролей
+            available_roles = ", ".join(predefined_roles.keys())
+            return jsonify({
+                'response': f"❌ Роль '{role_text}' не найдена. Доступные роли: {available_roles}\n\nИспользуйте команду: /role [название_роли]",
+                'is_command': True,
+                'current_role': session.get('current_role_name', 'Обычный ассистент'),
+                'history_count': len(session.get('chat_history', []))
+            })
+
+        # Устанавливаем кастомный промпт
+        session['custom_system_prompt'] = matched_role['prompt']
+        session['chat_mode'] = 'custom'
+        session['current_role_name'] = role_name
+
+        # Добавляем системное сообщение в историю (только для отображения, не для API)
+        chat_history = session.get('chat_history', [])
+        system_message = f"🔄 Роль изменена на: **{role_name}**\n\nТеперь я буду отвечать как {role_name}."
+        chat_history.append({'role': 'system', 'text': system_message})
+        session['chat_history'] = chat_history
+        session.modified = True
+
+        return jsonify({
+            'response': system_message,
+            'history': chat_history,
+            'is_command': True,
+            'current_role': role_name,
+            'history_count': len(chat_history)
+        })
+
+    except Exception as e:
+        logger.error(f"Error handling role command: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка при смене роли: {str(e)}",
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+
+
+def handle_system_command(user_message):
+    """Обработка команды для установки произвольного системного промпта"""
+    try:
+        # Извлекаем промпт из команды
+        system_prompt = user_message[8:].strip()  # Убираем "/system "
+
+        if not system_prompt:
+            return jsonify({
+                'response': "❌ Укажите системный промпт. Например: /system Ты теперь кот, который говорит мяу.",
+                'is_command': True,
+                'current_role': session.get('current_role_name', 'Обычный ассистент'),
+                'history_count': len(session.get('chat_history', []))
+            })
+
+        # Устанавливаем кастомный промпт
+        session['custom_system_prompt'] = system_prompt
+        session['chat_mode'] = 'custom'
+
+        # Создаем короткое название роли из промпта
+        role_name = "Кастомная роль"
+        if len(system_prompt) > 30:
+            role_name = system_prompt[:30] + "..."
+        else:
+            role_name = system_prompt
+
+        session['current_role_name'] = role_name
+
+        # Добавляем системное сообщение в историю
+        chat_history = session.get('chat_history', [])
+        system_message = f"🔄 Установлен кастомный системный промпт:\n\n**{system_prompt[:200]}...**" if len(
+            system_prompt) > 200 else f"🔄 Установлен кастомный системный промпт:\n\n**{system_prompt}**"
+        chat_history.append({'role': 'system', 'text': system_message})
+        session['chat_history'] = chat_history
+        session.modified = True
+
+        return jsonify({
+            'response': system_message,
+            'history': chat_history,
+            'is_command': True,
+            'current_role': role_name,
+            'history_count': len(chat_history),
+            'prompt_preview': system_prompt[:100] + "..." if len(system_prompt) > 100 else system_prompt
+        })
+
+    except Exception as e:
+        logger.error(f"Error handling system command: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка при установке системного промпта: {str(e)}",
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+
+
+def show_current_role():
+    """Показать текущую роль"""
+    current_role = session.get('current_role_name', 'Обычный ассистент')
+    custom_prompt = session.get('custom_system_prompt')
+
+    response_message = f"👤 **Текущая роль:** {current_role}\n\n"
+
+    if custom_prompt:
+        response_message += f"**Системный промпт:**\n{custom_prompt[:300]}..."
+        if len(custom_prompt) > 300:
+            response_message += f"\n\n_(показано 300 из {len(custom_prompt)} символов)_"
+    else:
+        response_message += f"**Режим:** {session.get('chat_mode', 'default')}\n"
+        response_message += f"**Системный промпт:** {SYSTEM_PROMPTS.get(session.get('chat_mode', 'default'), 'Не указан')[:300]}..."
+
+    return jsonify({
+        'response': response_message,
+        'is_command': True,
+        'current_role': current_role,
+        'history_count': len(session.get('chat_history', []))
+    })
+
+
+def reset_role():
+    """Сбросить роль к значениям по умолчанию"""
+    # Сбрасываем кастомный промпт
+    session['custom_system_prompt'] = None
+    session['chat_mode'] = 'default'
+    session['current_role_name'] = 'Обычный ассистент'
+
+    # Добавляем системное сообщение в историю
+    chat_history = session.get('chat_history', [])
+    system_message = "🔄 Роль сброшена к значениям по умолчанию. Теперь я обычный ассистент."
+    chat_history.append({'role': 'system', 'text': system_message})
+    session['chat_history'] = chat_history
+    session.modified = True
+
+    return jsonify({
+        'response': system_message,
+        'history': chat_history,
+        'is_command': True,
+        'current_role': 'Обычный ассистент',
+        'history_count': len(chat_history)
+    })
+
+
+def show_help():
+    """Показать справку по командам"""
+    help_text = """
+📚 **Доступные команды:**
+
+**Смена роли:**
+• `/role [название]` - сменить роль (инженер, режиссер, бабушка, ученый, философ, юморист, детектив)
+• `/system [промпт]` - установить произвольный системный промпт
+• `/reset` - сбросить роль к значениям по умолчанию
+• `/role` или `/current` - показать текущую роль
+
+**Управление:**
+• `/help` - показать эту справку
+• `/clear` - очистить историю диалога
+
+**Эксперимент:**
+1. Задайте вопрос в текущей роли
+2. Смените роль командой `/role инженер`
+3. Задайте тот же вопрос или продолжайте диалог
+4. Наблюдайте, как меняется стиль ответов!
+
+**Пример:**
+    /role инженер
+    Как улучшить общение в цифровую эпоху?
+
+    /role режиссер
+    А теперь объясни то же самое по-другому!
+    """
+
+    return jsonify({
+        'response': help_text,
+        'is_command': True,
+        'current_role': session.get('current_role_name', 'Обычный ассистент'),
+        'history_count': len(session.get('chat_history', []))
+    })
+
+
 @app.route('/set_mode', methods=['POST'])
 def set_mode():
     """Установка режима работы чата"""
     try:
         mode = request.json.get('mode', 'default')
 
-        if mode not in ['default', 'json_format', 'tz_collection']:
+        # Все допустимые режимы
+        valid_modes = ['default', 'json_format', 'tz_collection']
+
+        if mode not in valid_modes:
             return jsonify({'error': 'Неверный режим'}), 400
 
         init_session()
+
+        # Записываем смену роли в историю
+        old_mode = session.get('chat_mode', 'default')
 
         # Если переключаемся из режима ТЗ, сбрасываем состояние
         if mode != 'tz_collection':
@@ -402,6 +693,10 @@ def set_mode():
                 'role': 'assistant',
                 'text': 'Здравствуйте! Я помогу вам составить Техническое Задание. Расскажите, пожалуйста, о вашем проекте.'
             }]
+        else:
+            # Для других режимов сбрасываем кастомный промпт
+            session['custom_system_prompt'] = None
+            session['current_role_name'] = 'Обычный ассистент'
 
         session['chat_mode'] = mode
         session.modified = True
@@ -409,7 +704,9 @@ def set_mode():
         return jsonify({
             'success': True,
             'mode': mode,
-            'message': f'Режим изменен на: {mode}'
+            'message': f'Режим изменен на: {mode}',
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history': session.get('chat_history', [])
         })
     except Exception as e:
         logger.error(f"Error setting mode: {str(e)}")
@@ -419,11 +716,22 @@ def set_mode():
 @app.route('/clear_history', methods=['POST'])
 def clear_history():
     """Очистка истории диалога"""
+    init_session()
     session['chat_history'] = []
     session['tz_data'] = None
     session['tz_complete'] = False
     session.modified = True
-    return jsonify({'success': True})
+
+    # Добавляем системное сообщение
+    system_message = "🗑️ История диалога очищена."
+
+    return jsonify({
+        'success': True,
+        'response': system_message,
+        'history': [{'role': 'system', 'text': system_message}],
+        'current_role': session.get('current_role_name', 'Обычный ассистент'),
+        'history_count': 0
+    })
 
 
 @app.route('/api_info')
@@ -488,12 +796,16 @@ def test_api():
 def get_session_info():
     """Получить информацию о текущей сессии"""
     init_session()
+    chat_history = session.get('chat_history', [])
+
     return jsonify({
         'chat_mode': session.get('chat_mode', 'default'),
         'tz_complete': session.get('tz_complete', False),
         'tz_data': session.get('tz_data'),
-        'history_length': len(session.get('chat_history', [])),
-        'session_id': session.get('session_id')
+        'history_length': len(chat_history),
+        'session_id': session.get('session_id'),
+        'current_role': session.get('current_role_name', 'Обычный ассистент'),
+        'has_custom_prompt': bool(session.get('custom_system_prompt'))
     })
 
 
