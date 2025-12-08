@@ -9,6 +9,58 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
     <script>hljs.highlightAll();</script>
+    <style>
+        .temperature-control {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .temperature-control label {
+            font-weight: 600;
+            color: #333;
+            white-space: nowrap;
+        }
+
+        .temperature-select {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            background: white;
+            font-size: 14px;
+            min-width: 150px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .temperature-select:hover {
+            border-color: #4a6fa5;
+        }
+
+        .temperature-select:focus {
+            outline: none;
+            border-color: #4a6fa5;
+            box-shadow: 0 0 0 2px rgba(74, 111, 165, 0.2);
+        }
+
+        .temperature-info {
+            font-size: 12px;
+            color: #666;
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .temperature-info i {
+            color: #4a6fa5;
+        }
+    </style>
 </head>
 <body>
 <div class="container">
@@ -52,6 +104,7 @@
         <div class="session-info" id="sessionInfo">
             <i class="fas fa-database"></i> Сообщений в истории: <span id="historyCount">0</span>
             | Режим: <span id="currentMode">default</span>
+            | Температура: <span id="currentTemperature">{{ temperature }}</span>
         </div>
     </div>
 
@@ -72,6 +125,22 @@
         <div class="input-area">
             <!-- Панель дополнительных опций -->
             <div class="options-panel" id="optionsPanel">
+                <!-- Выбор температуры -->
+                <div class="temperature-control">
+                    <label for="temperatureSelect"><i class="fas fa-thermometer-half"></i> Температура модели:</label>
+                    <select id="temperatureSelect" class="temperature-select">
+                        <option value="0" {% if temperature== 0 %}selected{% endif %}>0 (точный)</option>
+                        <option value="0.3" {% if temperature== 0.3 %}selected{% endif %}>0.3 (структурированный)
+                        </option>
+                        <option value="0.7" {% if temperature== 0.7 %}selected{% endif %}>0.7 (баланс)</option>
+                        <option value="1.0" {% if temperature== 1.0 %}selected{% endif %}>1.0 (творческий)</option>
+                    </select>
+                    <div class="temperature-info" id="temperatureDescription">
+                        <i class="fas fa-info-circle"></i>
+                        <span id="tempDescText">Баланс креативности и точности</span>
+                    </div>
+                </div>
+
                 <div class="option" id="jsonOption" style="display: none;">
                     <div class="form-check">
                         <input type="checkbox" class="form-check-input" id="jsonFormat">
@@ -175,11 +244,43 @@ document.addEventListener('DOMContentLoaded', function() {
     scrollToBottom();
     document.getElementById('messageInput').focus();
 
+    // Инициализация описаний температуры
+    updateTemperatureDescription();
+
+    // Обработчик изменения температуры
+    document.getElementById('temperatureSelect').addEventListener('change', function() {
+        updateTemperatureDescription();
+    });
+
     // Подсветка кода в существующих сообщениях
     document.querySelectorAll('pre code').forEach((block) => {
         hljs.highlightElement(block);
     });
 });
+
+// Обновление описания температуры
+function updateTemperatureDescription() {
+    const tempSelect = document.getElementById('temperatureSelect');
+    const tempValue = parseFloat(tempSelect.value);
+    const descText = document.getElementById('tempDescText');
+
+    switch(tempValue) {
+        case 0:
+            descText.textContent = 'Точные и детерминированные ответы';
+            break;
+        case 0.3:
+            descText.textContent = 'Структурированные и последовательные ответы';
+            break;
+        case 0.7:
+            descText.textContent = 'Баланс креативности и точности';
+            break;
+        case 1.0:
+            descText.textContent = 'Креативные и разнообразные ответы';
+            break;
+        default:
+            descText.textContent = 'Температура модели';
+    }
+}
 
 // Обновление UI в зависимости от режима
 function updateModeUI() {
@@ -386,7 +487,9 @@ async function sendMessage() {
 
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
-    const requireJson = currentMode === 'default' && document.getElementById('jsonFormat').checked;
+    const requireJson = currentMode === 'default' && document.getElementById('jsonFormat')?.checked;
+    const temperatureSelect = document.getElementById('temperatureSelect');
+    const temperature = temperatureSelect ? temperatureSelect.value : "0.7";
 
     if (!message) return;
 
@@ -402,17 +505,26 @@ async function sendMessage() {
     isSendingMessage = true;
 
     try {
+        // Подготавливаем данные для отправки
+        const requestData = {
+            message: message,
+            require_json: requireJson || false
+        };
+
+        // Добавляем температуру только если она выбрана
+        if (temperature) {
+            requestData.temperature = parseFloat(temperature);
+        }
+
         const response = await fetch('/send_message', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                message: message,
-                require_json: requireJson
-            })
+            body: JSON.stringify(requestData)
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
@@ -442,6 +554,29 @@ async function sendMessage() {
         if (data.current_role) {
             document.getElementById('currentMode').textContent = data.current_role;
         }
+        if (data.temperature !== undefined) {
+            const tempValue = parseFloat(data.temperature).toFixed(1);
+            document.getElementById('currentTemperature').textContent = tempValue;
+            // Обновляем выбранное значение в выпадающем списке
+            if (temperatureSelect) {
+                // Ищем ближайшее значение из доступных вариантов
+                const options = Array.from(temperatureSelect.options);
+                let closestValue = "0.7";
+                let minDiff = Infinity;
+
+                options.forEach(option => {
+                    const optionValue = parseFloat(option.value);
+                    const diff = Math.abs(optionValue - data.temperature);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestValue = option.value;
+                    }
+                });
+
+                temperatureSelect.value = closestValue;
+                updateTemperatureDescription();
+            }
+        }
 
         // Если есть TZ данные, обновляем превью
         if (data.tz_data) {
@@ -450,13 +585,13 @@ async function sendMessage() {
 
     } catch (error) {
         console.error('Ошибка отправки сообщения:', error);
-        // Удаляем последнее сообщение пользователя (оно уже добавлено)
+        // Удаляем последнее сообщение пользователя из истории (которое добавили перед отправкой)
         const chatHistory = document.getElementById('chatHistory');
         const lastMessage = chatHistory.lastChild;
         if (lastMessage && lastMessage.classList.contains('user-message')) {
             chatHistory.removeChild(lastMessage);
         }
-        addMessageToHistory('system', '❌ Ошибка при отправке сообщения. Попробуйте еще раз.');
+        addMessageToHistory('system', `❌ Ошибка при отправке сообщения: ${error.message}`);
     } finally {
         showLoading(false);
         scrollToBottom();
@@ -473,6 +608,12 @@ async function updateSessionInfo() {
         const data = await response.json();
         document.getElementById('historyCount').textContent = data.history_length;
         document.getElementById('currentMode').textContent = data.current_role;
+        if (data.temperature !== undefined) {
+            document.getElementById('currentTemperature').textContent = data.temperature;
+            // Обновляем выбранное значение в выпадающем списке
+            document.getElementById('temperatureSelect').value = data.temperature;
+            updateTemperatureDescription();
+        }
     } catch (error) {
         console.error('Ошибка обновления информации о сессии:', error);
     }
@@ -583,6 +724,9 @@ async function updateSessionInfo() {
         const data = await response.json();
         document.getElementById('historyCount').textContent = data.history_length;
         document.getElementById('currentMode').textContent = data.chat_mode;
+        if (data.temperature !== undefined) {
+            document.getElementById('currentTemperature').textContent = data.temperature;
+        }
     } catch (error) {
         console.error('Ошибка обновления информации о сессии:', error);
     }
