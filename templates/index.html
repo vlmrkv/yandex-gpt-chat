@@ -425,12 +425,23 @@ async function sendMessage() {
             currentMode = data.chat_mode;
         }
 
-        // Добавляем ответ ассистента
-        addMessageToHistory('assistant', data.response);
+        // Если это команда, добавляем системное сообщение, иначе - ответ ассистента
+        if (data.is_command) {
+            addMessageToHistory('system', data.response);
+        } else {
+            addMessageToHistory('assistant', data.response);
+        }
 
         // Обновляем UI
         updateModeUI();
-        updateSessionInfo();
+
+        // Обновляем информацию о сессии
+        if (data.history_count !== undefined) {
+            document.getElementById('historyCount').textContent = data.history_count;
+        }
+        if (data.current_role) {
+            document.getElementById('currentMode').textContent = data.current_role;
+        }
 
         // Если есть TZ данные, обновляем превью
         if (data.tz_data) {
@@ -445,10 +456,25 @@ async function sendMessage() {
         if (lastMessage && lastMessage.classList.contains('user-message')) {
             chatHistory.removeChild(lastMessage);
         }
+        addMessageToHistory('system', '❌ Ошибка при отправке сообщения. Попробуйте еще раз.');
     } finally {
         showLoading(false);
         scrollToBottom();
         isSendingMessage = false;
+    }
+}
+
+// Обновление информации о сессии
+async function updateSessionInfo() {
+    try {
+        const response = await fetch('/get_session_info');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        document.getElementById('historyCount').textContent = data.history_length;
+        document.getElementById('currentMode').textContent = data.current_role;
+    } catch (error) {
+        console.error('Ошибка обновления информации о сессии:', error);
     }
 }
 
