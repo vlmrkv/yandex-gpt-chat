@@ -6,59 +6,14 @@
     <title>Универсальный YandexGPT Агент</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
-    <script>hljs.highlightAll();</script>
     <style>
-        .temperature-control {
-            margin-bottom: 10px;
-            padding: 8px 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border: 1px solid #e0e0e0;
+        .model-btn.active {
+            background-color: #4a6fa5 !important;
+            color: white !important;
         }
-
-        .temperature-control label {
-            font-weight: 600;
-            color: #333;
-            white-space: nowrap;
-        }
-
-        .temperature-select {
-            padding: 6px 12px;
-            border-radius: 6px;
-            border: 1px solid #ddd;
-            background: white;
-            font-size: 14px;
-            min-width: 150px;
-            cursor: pointer;
-            transition: border-color 0.3s;
-        }
-
-        .temperature-select:hover {
-            border-color: #4a6fa5;
-        }
-
-        .temperature-select:focus {
-            outline: none;
-            border-color: #4a6fa5;
-            box-shadow: 0 0 0 2px rgba(74, 111, 165, 0.2);
-        }
-
-        .temperature-info {
-            font-size: 12px;
-            color: #666;
-            margin-left: auto;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .temperature-info i {
-            color: #4a6fa5;
+        .mode-btn.active {
+            background-color: #4a6fa5 !important;
+            color: white !important;
         }
     </style>
 </head>
@@ -72,156 +27,94 @@
         </div>
     </header>
 
-    <!-- Панель режимов работы -->
-    <div class="mode-panel">
-        <div class="mode-selector">
-            <h3><i class="fas fa-cogs"></i> Режимы работы:</h3>
-            <div class="mode-buttons">
-                <button class="mode-btn active" data-mode="default" onclick="setMode('default')">
-                    <i class="fas fa-comments"></i> Обычный чат
-                </button>
-                <button class="mode-btn" data-mode="json_format" onclick="setMode('json_format')">
-                    <i class="fas fa-code"></i> JSON Формат
-                </button>
-                <button class="mode-btn" data-mode="tz_collection" onclick="setMode('tz_collection')">
-                    <i class="fas fa-clipboard-list"></i> Сбор ТЗ
-                </button>
-            </div>
+    <!-- Панель моделей -->
+    <div class="models-panel">
+        <h3><i class="fas fa-brain"></i> Выбор модели:</h3>
+        <div class="model-buttons" id="modelButtons">
+            <!-- Кнопки будут созданы через JavaScript -->
         </div>
 
-        <div class="mode-info" id="modeInfo">
-            <div id="defaultInfo" class="mode-description active">
-                <i class="fas fa-info-circle"></i> Стандартный режим общения с ассистентом.
-            </div>
-            <div id="jsonInfo" class="mode-description">
-                <i class="fas fa-info-circle"></i> Все ответы будут в формате JSON для удобного парсинга.
-            </div>
-            <div id="tzInfo" class="mode-description">
-                <i class="fas fa-info-circle"></i> Режим сбора требований для Технического Задания.
-            </div>
+        <div class="model-info" id="modelInfo">
+            <p id="modelDescription">Выберите модель для начала работы</p>
         </div>
 
-        <div class="session-info" id="sessionInfo">
-            <i class="fas fa-database"></i> Сообщений в истории: <span id="historyCount">0</span>
-            | Режим: <span id="currentMode">default</span>
-            | Температура: <span id="currentTemperature">{{ temperature }}</span>
+        <!-- Панель режимов -->
+        <h3><i class="fas fa-cogs"></i> Режимы работы:</h3>
+        <div class="mode-buttons">
+            <button class="mode-btn active" onclick="setMode('default')">
+                <i class="fas fa-comments"></i> Обычный чат
+            </button>
+            <button class="mode-btn" onclick="setMode('json_format')">
+                <i class="fas fa-code"></i> JSON Формат
+            </button>
+            <button class="mode-btn" onclick="setMode('tz_collection')">
+                <i class="fas fa-clipboard-list"></i> Сбор ТЗ
+            </button>
+        </div>
+
+        <div class="session-info">
+            <i class="fas fa-database"></i>
+            Сообщений: <span id="historyCount">0</span> |
+            Модель: <span id="currentModel">-</span> |
+            Температура: <span id="currentTemperature">0.7</span>
         </div>
     </div>
 
+    <!-- Чат -->
     <div class="chat-container">
         <div class="chat-history" id="chatHistory">
-            {% for message in history %}
-            <div class="message {{ 'user-message' if message.role == 'user' else 'assistant-message' }}">
-                <div class="message-header">
-                    <i class="fas {{ 'fa-user' if message.role == 'user' else 'fa-robot' }}"></i>
-                    <strong>{{ 'Вы' if message.role == 'user' else 'Ассистент' }}</strong>
-                    <span class="message-time">{{ loop.index }}</span>
-                </div>
-                <div class="message-content">{{ message.text|safe }}</div>
-            </div>
-            {% endfor %}
+            <!-- Сообщения будут добавляться через JavaScript -->
         </div>
 
         <div class="input-area">
-            <!-- Панель дополнительных опций -->
-            <div class="options-panel" id="optionsPanel">
-                <!-- Выбор температуры -->
+            <div class="options-panel">
                 <div class="temperature-control">
-                    <label for="temperatureSelect"><i class="fas fa-thermometer-half"></i> Температура модели:</label>
-                    <select id="temperatureSelect" class="temperature-select">
-                        <option value="0" {% if temperature== 0 %}selected{% endif %}>0 (точный)</option>
-                        <option value="0.3" {% if temperature== 0.3 %}selected{% endif %}>0.3 (структурированный)
-                        </option>
-                        <option value="0.7" {% if temperature== 0.7 %}selected{% endif %}>0.7 (баланс)</option>
-                        <option value="1.0" {% if temperature== 1.0 %}selected{% endif %}>1.0 (творческий)</option>
+                    <label><i class="fas fa-thermometer-half"></i> Температура:</label>
+                    <select id="temperatureSelect">
+                        <option value="0">0 (точный)</option>
+                        <option value="0.3">0.3 (структурированный)</option>
+                        <option value="0.7" selected>0.7 (баланс)</option>
+                        <option value="1.0">1.0 (творческий)</option>
                     </select>
-                    <div class="temperature-info" id="temperatureDescription">
+                    <div class="temperature-info">
                         <i class="fas fa-info-circle"></i>
                         <span id="tempDescText">Баланс креативности и точности</span>
                     </div>
                 </div>
 
                 <div class="option" id="jsonOption" style="display: none;">
-                    <div class="form-check">
-                        <input type="checkbox" class="form-check-input" id="jsonFormat">
-                        <label class="form-check-label" for="jsonFormat">
-                            <i class="fas fa-code"></i> Получить ответ в формате JSON
-                        </label>
-                    </div>
-                    <small class="form-text">Доступно только в обычном режиме</small>
-                </div>
-
-                <div class="option" id="tzStatus" style="display: none;">
-                    <div class="tz-status-indicator">
-                        <i class="fas fa-sync fa-spin"></i>
-                        <span>Сбор требований активен...</span>
-                    </div>
-                    <button class="btn-small" onclick="resetTZ()">
-                        <i class="fas fa-redo"></i> Сбросить ТЗ
-                    </button>
-                </div>
-
-                <div class="option" id="tzComplete" style="display: none;">
-                    <div class="tz-complete-indicator">
-                        <i class="fas fa-check-circle"></i>
-                        <span>ТЗ сформировано!</span>
-                    </div>
-                    <button class="btn-small btn-success" onclick="downloadTZ()">
-                        <i class="fas fa-download"></i> Скачать ТЗ
-                    </button>
+                    <label>
+                        <input type="checkbox" id="jsonFormat">
+                        <i class="fas fa-code"></i> Получить ответ в формате JSON
+                    </label>
                 </div>
             </div>
 
-            <!-- Основная область ввода -->
             <div class="input-container">
-                <textarea
-                        id="messageInput"
-                        placeholder="Введите ваше сообщение..."
-                        rows="3"
-                        onkeydown="if(event.keyCode===13&&!event.shiftKey){event.preventDefault();sendMessage();}"
-                ></textarea>
+                <textarea id="messageInput" placeholder="Введите ваше сообщение..." rows="3"></textarea>
                 <button id="sendButton" onclick="sendMessage()">
                     <i class="fas fa-paper-plane"></i> Отправить
                 </button>
             </div>
 
-            <!-- Панель управления -->
             <div class="controls">
-                <button id="clearButton" onclick="clearHistory()">
+                <button onclick="clearHistory()">
                     <i class="fas fa-trash"></i> Очистить историю
                 </button>
-                <button id="exportButton" onclick="exportHistory()">
+                <button onclick="exportHistory()">
                     <i class="fas fa-file-export"></i> Экспорт
                 </button>
-                <div class="model-info">
-                    <i class="fas fa-brain"></i> Модель: yandexgpt-latest
+                <div class="stats">
+                    <i class="fas fa-chart-line"></i>
+                    <span id="currentStats">-</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Превиью ТЗ -->
-    <div id="tzPreview" class="tz-preview" style="display: none;">
-        <h3><i class="fas fa-file-code"></i> Предпросмотр ТЗ</h3>
-        <pre><code id="tzPreviewContent" class="language-json"></code></pre>
-    </div>
-
     <footer class="footer">
-        <p>Powered by YandexGPT API | Универсальный агент с поддержкой JSON и ТЗ</p>
+        <p>Powered by Yandex Cloud API</p>
     </footer>
-</div>
-
-<!-- Модальное окно экспорта -->
-<div id="exportModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <h3><i class="fas fa-file-export"></i> Экспорт истории</h3>
-        <textarea id="exportData" rows="10" readonly></textarea>
-        <div class="modal-actions">
-            <button onclick="copyExport()"><i class="fas fa-copy"></i> Копировать</button>
-            <button onclick="downloadExport()"><i class="fas fa-download"></i> Скачать</button>
-            <button class="btn-close" onclick="closeModal()">Закрыть</button>
-        </div>
-    </div>
 </div>
 
 <!-- Индикатор загрузки -->
@@ -231,253 +124,112 @@
 </div>
 
 <script>
-    // Текущее состояние
-let currentMode = '{{ chat_mode }}';
-let tzComplete = {{ 'true' if tz_complete else 'false' }};
+// Глобальные переменные
+let currentMode = 'default';
+let currentModel = 'yandexgpt-lite';
+let models = {};
+let totalTokens = 0;
+let totalCost = 0;
+let totalTime = 0;
 let isSendingMessage = false;
 
 // Инициализация
-document.addEventListener('DOMContentLoaded', function() {
-    checkApiStatus();
-    updateModeUI();
-    updateSessionInfo();
-    scrollToBottom();
-    document.getElementById('messageInput').focus();
-
-    // Инициализация описаний температуры
+document.addEventListener('DOMContentLoaded', async function() {
+    await checkApiStatus();
+    await loadModels();
     updateTemperatureDescription();
+    updateSessionInfo();
 
-    // Обработчик изменения температуры
-    document.getElementById('temperatureSelect').addEventListener('change', function() {
-        updateTemperatureDescription();
+    document.getElementById('temperatureSelect').addEventListener('change', updateTemperatureDescription);
+    document.getElementById('messageInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
     });
 
-    // Подсветка кода в существующих сообщениях
-    document.querySelectorAll('pre code').forEach((block) => {
-        hljs.highlightElement(block);
-    });
+    document.getElementById('messageInput').focus();
 });
 
-// Обновление описания температуры
-function updateTemperatureDescription() {
-    const tempSelect = document.getElementById('temperatureSelect');
-    const tempValue = parseFloat(tempSelect.value);
-    const descText = document.getElementById('tempDescText');
+// Загрузка моделей
+async function loadModels() {
+    try {
+        const response = await fetch('/get_models');
+        if (response.ok) {
+            models = await response.json();
+            renderModelButtons();
 
-    switch(tempValue) {
-        case 0:
-            descText.textContent = 'Точные и детерминированные ответы';
-            break;
-        case 0.3:
-            descText.textContent = 'Структурированные и последовательные ответы';
-            break;
-        case 0.7:
-            descText.textContent = 'Баланс креативности и точности';
-            break;
-        case 1.0:
-            descText.textContent = 'Креативные и разнообразные ответы';
-            break;
-        default:
-            descText.textContent = 'Температура модели';
+            // Устанавливаем модель по умолчанию
+            if (models['yandexgpt-lite']) {
+                setModel('yandexgpt-lite');
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки моделей:', error);
     }
 }
 
-// Обновление UI в зависимости от режима
-function updateModeUI() {
-    // Обновляем активные кнопки режимов
-    document.querySelectorAll('.mode-btn').forEach(btn => {
+// Отрисовка кнопок моделей
+function renderModelButtons() {
+    const container = document.getElementById('modelButtons');
+    container.innerHTML = '';
+
+    Object.keys(models).forEach(modelKey => {
+        const model = models[modelKey];
+        const button = document.createElement('button');
+        button.className = 'model-btn';
+        button.innerHTML = `<i class="fas fa-microchip"></i> ${model.name}`;
+        button.onclick = () => setModel(modelKey);
+        container.appendChild(button);
+    });
+}
+
+// Установка модели
+function setModel(modelKey) {
+    if (!models[modelKey] || isSendingMessage) return;
+
+    // Обновляем активную кнопку
+    document.querySelectorAll('.model-btn').forEach(btn => {
         btn.classList.remove('active');
-        if (btn.dataset.mode === currentMode) {
-            btn.classList.add('active');
-        }
     });
+    event.target.classList.add('active');
 
-    // Обновляем описания режимов
-    document.querySelectorAll('.mode-description').forEach(desc => {
-        desc.classList.remove('active');
-    });
-    document.getElementById(currentMode + 'Info').classList.add('active');
+    currentModel = modelKey;
+    const model = models[modelKey];
 
-    // Обновляем дополнительные опции
-    const jsonOption = document.getElementById('jsonOption');
-    const tzStatus = document.getElementById('tzStatus');
-    const tzCompleteEl = document.getElementById('tzComplete');
-    const tzPreview = document.getElementById('tzPreview');
-
-    if (currentMode === 'default') {
-        jsonOption.style.display = 'block';
-        tzStatus.style.display = 'none';
-        tzCompleteEl.style.display = 'none';
-        tzPreview.style.display = 'none';
-    } else if (currentMode === 'json_format') {
-        jsonOption.style.display = 'none';
-        tzStatus.style.display = 'none';
-        tzCompleteEl.style.display = 'none';
-        tzPreview.style.display = 'none';
-    } else if (currentMode === 'tz_collection') {
-        jsonOption.style.display = 'none';
-
-        if (tzComplete) {
-            tzStatus.style.display = 'none';
-            tzCompleteEl.style.display = 'block';
-            tzPreview.style.display = 'block';
-            updateTZPreview();
-        } else {
-            tzStatus.style.display = 'block';
-            tzCompleteEl.style.display = 'none';
-            tzPreview.style.display = 'none';
-        }
-    }
-
-    // Обновляем placeholder в зависимости от режима
-    const input = document.getElementById('messageInput');
-    if (currentMode === 'tz_collection') {
-        input.placeholder = 'Отвечайте на вопросы аналитика для сбора требований...';
-    } else if (currentMode === 'json_format') {
-        input.placeholder = 'Введите сообщение (ответ будет в JSON формате)...';
-    } else {
-        input.placeholder = 'Введите ваше сообщение...';
-    }
+    // Обновляем информацию о модели
+    document.getElementById('currentModel').textContent = model.name;
+    document.getElementById('modelDescription').innerHTML = `
+        <strong>${model.name}</strong><br>
+        ${model.description}<br>
+        <small>Макс. токенов: ${model.max_tokens} | Цена: ${model.cost_per_1k_tokens} руб/1K токенов</small>
+    `;
 }
 
-// Установка режима работы
-async function setMode(mode) {
+// Установка режима
+function setMode(mode) {
     if (currentMode === mode || isSendingMessage) return;
 
-    showLoading(true, 'Смена режима...');
-    try {
-        const response = await fetch('/set_mode', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ mode: mode })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        currentMode = data.mode;
-        tzComplete = false;
-
-        // Обновляем историю на клиенте
-        document.getElementById('chatHistory').innerHTML = '';
-
-        // Добавляем приветственное сообщение для режима ТЗ
-        if (mode === 'tz_collection') {
-            addMessageToHistory('assistant', 'Здравствуйте! Я помогу вам составить Техническое Задание. Расскажите, пожалуйста, о вашем проекте.');
-        }
-
-        updateModeUI();
-        updateSessionInfo();
-
-    } catch (error) {
-        console.error('Ошибка при смене режима:', error);
-        // Не показываем alert при ошибке - просто обновляем статус
-        updateSessionInfo();
-    } finally {
-        showLoading(false);
-    }
-}
-
-// Завершить сбор ТЗ вручную
-async function manualCompleteTZ() {
-    if (!confirm('Завершить сбор требований и сформировать ТЗ на основе текущей информации?')) return;
-
-    showLoading(true, 'Формирование ТЗ...');
-    try {
-        // Отправляем специальное сообщение для завершения
-        const response = await fetch('/send_message', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                message: 'Вся информация собрана. Пожалуйста, сформируй финальное ТЗ в формате JSON.'
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.tz_complete) {
-            tzComplete = true;
-            updateModeUI();
-            addMessageToHistory('assistant', data.response);
-        }
-    } catch (error) {
-        console.error('Ошибка:', error);
-        addMessageToHistory('assistant', 'Ошибка при формировании ТЗ. Попробуйте еще раз.');
-    } finally {
-        showLoading(false);
-    }
-}
-
-// Выйти из режима ТЗ
-async function endTzMode() {
-    if (isSendingMessage) return;
-
-    const response = await fetch('/end_tz_mode', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'}
+    // Обновляем активные кнопки
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
     });
+    event.target.classList.add('active');
 
-    if (response.ok) {
-        currentMode = 'default';
-        tzComplete = false;
-        updateModeUI();
-        addMessageToHistory('assistant', 'Режим сбора ТЗ завершен. Возвращаюсь в обычный режим.');
-    }
-}
+    currentMode = mode;
 
-// Показать превью ТЗ
-async function updateTZPreview(tzData = null) {
-    if (!tzData) {
-        // Получаем данные с сервера
-        try {
-            const response = await fetch('/get_session_info');
-            if (response.ok) {
-                const data = await response.json();
-                tzData = data.tz_data;
-            }
-        } catch (error) {
-            console.error('Ошибка получения данных ТЗ:', error);
-            return;
-        }
-    }
+    // Показываем/скрываем опцию JSON
+    const jsonOption = document.getElementById('jsonOption');
+    jsonOption.style.display = mode === 'default' ? 'block' : 'none';
 
-    if (tzData) {
-        const preview = document.getElementById('tzPreview');
-        const content = document.getElementById('tzPreviewContent');
-
-        content.textContent = JSON.stringify(tzData, null, 2);
-        preview.style.display = 'block';
-        hljs.highlightElement(content);
-    }
-}
-
-// Скачать ТЗ
-async function downloadTZ() {
-    try {
-        const response = await fetch('/get_session_info');
-        if (!response.ok) return;
-
-        const data = await response.json();
-        if (data.tz_data) {
-            const jsonStr = JSON.stringify(data.tz_data, null, 2);
-            const blob = new Blob([jsonStr], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `ТЗ_${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-    } catch (error) {
-        console.error('Ошибка скачивания ТЗ:', error);
-        alert('Ошибка при скачивании ТЗ');
+    // Обновляем плейсхолдер
+    const input = document.getElementById('messageInput');
+    if (mode === 'tz_collection') {
+        input.placeholder = 'Расскажите о вашем проекте...';
+    } else if (mode === 'json_format') {
+        input.placeholder = 'Введите сообщение (ответ будет в JSON)...';
+    } else {
+        input.placeholder = 'Введите ваше сообщение...';
     }
 }
 
@@ -487,276 +239,148 @@ async function sendMessage() {
 
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
-    const requireJson = currentMode === 'default' && document.getElementById('jsonFormat')?.checked;
-    const temperatureSelect = document.getElementById('temperatureSelect');
-    const temperature = temperatureSelect ? temperatureSelect.value : "0.7";
+    const requireJson = document.getElementById('jsonFormat')?.checked || false;
+    const temperature = parseFloat(document.getElementById('temperatureSelect').value);
 
     if (!message) return;
 
-    // Добавляем сообщение пользователя в историю
-    addMessageToHistory('user', message);
+    // Добавляем сообщение пользователя
+    addMessage('user', message);
     input.value = '';
     scrollToBottom();
 
-    // Показываем индикатор загрузки
-    const loadingText = currentMode === 'tz_collection' ? 'Аналитик собирает требования...' : 'Ассистент думает...';
-    showLoading(true, loadingText);
-
+    showLoading(true, 'Ассистент думает...');
     isSendingMessage = true;
 
     try {
-        // Подготавливаем данные для отправки
-        const requestData = {
-            message: message,
-            require_json: requireJson || false
-        };
-
-        // Добавляем температуру только если она выбрана
-        if (temperature) {
-            requestData.temperature = parseFloat(temperature);
-        }
-
         const response = await fetch('/send_message', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(requestData)
+            body: JSON.stringify({
+                message: message,
+                require_json: requireJson,
+                model: currentModel,
+                temperature: temperature
+            })
         });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-        }
 
         const data = await response.json();
 
-        // Обновляем состояние
-        if (data.tz_complete !== undefined) {
-            tzComplete = data.tz_complete;
-        }
-        if (data.chat_mode) {
-            currentMode = data.chat_mode;
-        }
-
-        // Если это команда, добавляем системное сообщение, иначе - ответ ассистента
-        if (data.is_command) {
-            addMessageToHistory('system', data.response);
+        if (data.error) {
+            addMessage('system', `❌ ${data.error}`);
+        } else if (data.is_command) {
+            addMessage('system', data.response);
         } else {
-            addMessageToHistory('assistant', data.response);
-        }
+            addMessage('assistant', data.response, {
+                execution_time: data.execution_time,
+                total_tokens: data.total_tokens,
+                cost: data.cost,
+                model_name: data.model_name
+            });
 
-        // Обновляем UI
-        updateModeUI();
+            // Обновляем статистику
+            totalTokens += data.total_tokens || 0;
+            totalCost += data.cost || 0;
+            totalTime += data.execution_time || 0;
+            updateStats();
+        }
 
         // Обновляем информацию о сессии
-        if (data.history_count !== undefined) {
-            document.getElementById('historyCount').textContent = data.history_count;
-        }
-        if (data.current_role) {
-            document.getElementById('currentMode').textContent = data.current_role;
-        }
-        if (data.temperature !== undefined) {
-            const tempValue = parseFloat(data.temperature).toFixed(1);
-            document.getElementById('currentTemperature').textContent = tempValue;
-            // Обновляем выбранное значение в выпадающем списке
-            if (temperatureSelect) {
-                // Ищем ближайшее значение из доступных вариантов
-                const options = Array.from(temperatureSelect.options);
-                let closestValue = "0.7";
-                let minDiff = Infinity;
-
-                options.forEach(option => {
-                    const optionValue = parseFloat(option.value);
-                    const diff = Math.abs(optionValue - data.temperature);
-                    if (diff < minDiff) {
-                        minDiff = diff;
-                        closestValue = option.value;
-                    }
-                });
-
-                temperatureSelect.value = closestValue;
-                updateTemperatureDescription();
-            }
-        }
-
-        // Если есть TZ данные, обновляем превью
-        if (data.tz_data) {
-            updateTZPreview(data.tz_data);
-        }
+        updateSessionInfo();
 
     } catch (error) {
         console.error('Ошибка отправки сообщения:', error);
-        // Удаляем последнее сообщение пользователя из истории (которое добавили перед отправкой)
-        const chatHistory = document.getElementById('chatHistory');
-        const lastMessage = chatHistory.lastChild;
-        if (lastMessage && lastMessage.classList.contains('user-message')) {
-            chatHistory.removeChild(lastMessage);
-        }
-        addMessageToHistory('system', `❌ Ошибка при отправке сообщения: ${error.message}`);
+        addMessage('system', '❌ Ошибка при отправке сообщения');
     } finally {
         showLoading(false);
-        scrollToBottom();
         isSendingMessage = false;
+        scrollToBottom();
     }
 }
 
-// Обновление информации о сессии
-async function updateSessionInfo() {
-    try {
-        const response = await fetch('/get_session_info');
-        if (!response.ok) return;
-
-        const data = await response.json();
-        document.getElementById('historyCount').textContent = data.history_length;
-        document.getElementById('currentMode').textContent = data.current_role;
-        if (data.temperature !== undefined) {
-            document.getElementById('currentTemperature').textContent = data.temperature;
-            // Обновляем выбранное значение в выпадающем списке
-            document.getElementById('temperatureSelect').value = data.temperature;
-            updateTemperatureDescription();
-        }
-    } catch (error) {
-        console.error('Ошибка обновления информации о сессии:', error);
-    }
-}
-
-// Сброс ТЗ
-async function resetTZ() {
-    if (!confirm('Сбросить сбор ТЗ и начать заново?')) return;
-
-    await setMode('default');
-    await setMode('tz_collection');
-}
-
-// Экспорт истории
-async function exportHistory() {
-    try {
-        const response = await fetch('/get_session_info');
-        if (!response.ok) return;
-
-        const data = await response.json();
-
-        const exportData = {
-            session_info: data,
-            chat_history: Array.from(document.querySelectorAll('.message')).map(msg => ({
-                sender: msg.querySelector('strong').textContent,
-                content: msg.querySelector('.message-content').textContent,
-                type: msg.classList.contains('user-message') ? 'user' : 'assistant'
-            }))
-        };
-
-        document.getElementById('exportData').value = JSON.stringify(exportData, null, 2);
-        document.getElementById('exportModal').style.display = 'block';
-    } catch (error) {
-        console.error('Ошибка экспорта:', error);
-        alert('Ошибка при экспорте истории');
-    }
-}
-
-// Копировать экспорт
-function copyExport() {
-    const textarea = document.getElementById('exportData');
-    textarea.select();
-    try {
-        document.execCommand('copy');
-        alert('Скопировано в буфер обмена!');
-    } catch (error) {
-        console.error('Ошибка копирования:', error);
-    }
-}
-
-// Скачать экспорт
-function downloadExport() {
-    const data = document.getElementById('exportData').value;
-    if (!data) return;
-
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `chat_export_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
-
-// Закрыть модальное окно
-function closeModal() {
-    document.getElementById('exportModal').style.display = 'none';
-}
-
-// Добавление сообщения в историю
-function addMessageToHistory(role, content) {
-    const chatHistory = document.getElementById('chatHistory');
+// Добавление сообщения
+function addMessage(role, content, metrics = null) {
+    const container = document.getElementById('chatHistory');
     const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${role === 'user' ? 'user-message' : 'assistant-message'}`;
+    messageDiv.className = `message ${role}-message`;
 
-    const icon = role === 'user' ? 'fa-user' : 'fa-robot';
-    const sender = role === 'user' ? 'Вы' : 'Ассистент';
+    let metricsHTML = '';
+    if (metrics) {
+        metricsHTML = `
+            <div class="message-metrics">
+                <small>
+                    <i class="fas fa-clock"></i> ${metrics.execution_time}с |
+                    <i class="fas fa-hashtag"></i> ${metrics.total_tokens} токенов |
+                    <i class="fas fa-ruble-sign"></i> ${metrics.cost.toFixed(5)} руб |
+                    <i class="fas fa-brain"></i> ${metrics.model_name}
+                </small>
+            </div>
+        `;
+    }
 
     messageDiv.innerHTML = `
         <div class="message-header">
-            <i class="fas ${icon}"></i>
-            <strong>${sender}</strong>
+            <i class="fas ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i>
+            <strong>${role === 'user' ? 'Вы' : 'Ассистент'}</strong>
             <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
         </div>
         <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+        ${metricsHTML}
     `;
 
-    chatHistory.appendChild(messageDiv);
+    container.appendChild(messageDiv);
+}
 
-    // Подсветка кода в сообщениях
-    setTimeout(() => {
-        messageDiv.querySelectorAll('code').forEach((block) => {
-            hljs.highlightElement(block);
-        });
-    }, 100);
-
-    updateSessionInfo();
+// Обновление статистики
+function updateStats() {
+    const statsElement = document.getElementById('currentStats');
+    statsElement.innerHTML = `
+        ${totalTokens} токенов | ${totalCost.toFixed(5)} руб | ${totalTime.toFixed(1)}с
+    `;
 }
 
 // Обновление информации о сессии
 async function updateSessionInfo() {
     try {
         const response = await fetch('/get_session_info');
-        if (!response.ok) return;
-
-        const data = await response.json();
-        document.getElementById('historyCount').textContent = data.history_length;
-        document.getElementById('currentMode').textContent = data.chat_mode;
-        if (data.temperature !== undefined) {
-            document.getElementById('currentTemperature').textContent = data.temperature;
-        }
-    } catch (error) {
-        console.error('Ошибка обновления информации о сессии:', error);
-    }
-}
-
-// Очистка истории
-async function clearHistory() {
-    if (!confirm('Вы уверены, что хотите очистить историю диалога?')) return;
-
-    try {
-        const response = await fetch('/clear_history', {
-            method: 'POST'
-        });
-
         if (response.ok) {
-            document.getElementById('chatHistory').innerHTML = '';
-            tzComplete = false;
-            updateModeUI();
-            updateSessionInfo();
+            const data = await response.json();
+            document.getElementById('historyCount').textContent = data.history_length || 0;
+            document.getElementById('currentTemperature').textContent = data.temperature || '0.7';
         }
     } catch (error) {
-        console.error('Ошибка очистки истории:', error);
+        console.error('Ошибка обновления сессии:', error);
     }
 }
 
-// Показать/скрыть индикатор загрузки
-function showLoading(show, text = 'Ассистент думает...') {
-    document.getElementById('loading').style.display = show ? 'flex' : 'none';
-    document.getElementById('loadingText').textContent = text;
-    document.getElementById('sendButton').disabled = show;
+// Обновление описания температуры
+function updateTemperatureDescription() {
+    const temp = parseFloat(document.getElementById('temperatureSelect').value);
+    const desc = document.getElementById('tempDescText');
+
+    switch(temp) {
+        case 0: desc.textContent = 'Точные и детерминированные ответы'; break;
+        case 0.3: desc.textContent = 'Структурированные ответы'; break;
+        case 0.7: desc.textContent = 'Баланс креативности и точности'; break;
+        case 1.0: desc.textContent = 'Креативные и разнообразные ответы'; break;
+        default: desc.textContent = 'Температура модели';
+    }
+}
+
+// Показать/скрыть загрузку
+function showLoading(show, text) {
+    const loading = document.getElementById('loading');
+    const loadingText = document.getElementById('loadingText');
+    const sendButton = document.getElementById('sendButton');
+
+    if (show) {
+        loading.style.display = 'flex';
+        loadingText.textContent = text;
+        sendButton.disabled = true;
+    } else {
+        loading.style.display = 'none';
+        sendButton.disabled = false;
+    }
 }
 
 // Проверка статуса API
@@ -766,7 +390,6 @@ async function checkApiStatus() {
         if (!response.ok) return;
 
         const data = await response.json();
-
         const statusDot = document.querySelector('.status-dot');
         const statusText = document.querySelector('.status-text');
 
@@ -782,29 +405,57 @@ async function checkApiStatus() {
     }
 }
 
+// Очистка истории
+async function clearHistory() {
+    if (!confirm('Очистить историю диалога?')) return;
+
+    try {
+        const response = await fetch('/clear_history', {method: 'POST'});
+        if (response.ok) {
+            document.getElementById('chatHistory').innerHTML = '';
+            totalTokens = 0;
+            totalCost = 0;
+            totalTime = 0;
+            updateStats();
+            updateSessionInfo();
+        }
+    } catch (error) {
+        console.error('Ошибка очистки истории:', error);
+    }
+}
+
+// Экспорт истории
+async function exportHistory() {
+    const messages = Array.from(document.querySelectorAll('.message')).map(msg => ({
+        sender: msg.querySelector('strong').textContent,
+        content: msg.querySelector('.message-content').textContent
+    }));
+
+    const exportData = {
+        messages: messages,
+        stats: {
+            total_tokens: totalTokens,
+            total_cost: totalCost,
+            total_time: totalTime
+        }
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat_export_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 // Прокрутка к последнему сообщению
 function scrollToBottom() {
     const chatHistory = document.getElementById('chatHistory');
     chatHistory.scrollTop = chatHistory.scrollHeight;
 }
-
-// Закрытие модального окна при клике вне его
-window.onclick = function(event) {
-    const modal = document.getElementById('exportModal');
-    if (event.target === modal) {
-        closeModal();
-    }
-};
-
-// Обработка нажатия клавиши Enter (с Shift для новой строки)
-document.getElementById('messageInput').addEventListener('keydown', function(event) {
-    if (event.keyCode === 13 && !event.shiftKey) {
-        event.preventDefault();
-        if (!isSendingMessage) {
-            sendMessage();
-        }
-    }
-});
 </script>
 </body>
 </html>
