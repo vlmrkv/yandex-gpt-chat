@@ -476,3 +476,138 @@ textarea:focus {
 ::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8;
 }
+
+/* Стили для анализа поведения и статистики */
+.behavior-analysis {
+    margin-top: 10px;
+    padding: 10px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 8px;
+    border-left: 4px solid #4a6fa5;
+    font-size: 13px;
+}
+
+.behavior-metric {
+    display: inline-block;
+    margin-right: 15px;
+    padding: 3px 8px;
+    background: white;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.token-breakdown {
+    display: flex;
+    gap: 10px;
+    margin-top: 5px;
+    flex-wrap: wrap;
+}
+
+.token-type {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.input-token {
+    background: #e3f2fd;
+    color: #1976d2;
+    border: 1px solid #bbdefb;
+}
+
+.output-token {
+    background: #e8f5e9;
+    color: #388e3c;
+    border: 1px solid #c8e6c9;
+}
+
+.total-token {
+    background: #fff3e0;
+    color: #f57c00;
+    border: 1px solid #ffe0b2;
+}
+
+.recommendations {
+    margin-top: 8px;
+    padding: 8px;
+    background: #fff8e1;
+    border-radius: 4px;
+    border-left: 3px solid #ffc107;
+    font-size: 12px;
+}
+
+.efficiency-score {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+.score-high {
+    background: #4caf50;
+    color: white;
+}
+
+.score-medium {
+    background: #ff9800;
+    color: white;
+}
+
+.score-low {
+    background: #f44336;
+    color: white;
+}
+
+.stats-panel {
+    background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin: 20px 30px;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.stat-item {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 10px;
+    border-radius: 6px;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 20px;
+    font-weight: bold;
+    margin: 5px 0;
+}
+
+.stat-label {
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+.message-metrics {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    font-size: 12px;
+    color: #666;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.assistant-message .message-metrics {
+    background: rgba(76, 175, 80, 0.1);
+    border-top: 1px solid rgba(76, 175, 80, 0.2);
+}
+
+.assistant-message .message-metrics i {
+    color: #4CAF50;
+}

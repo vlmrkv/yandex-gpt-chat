@@ -35,120 +35,46 @@ MODELS_CONFIG = {
     'yandexgpt-lite': {
         'name': 'YandexGPT Lite',
         'model_uri': 'yandexgpt/latest',
-        'cost_per_1k_tokens': 0.0003,
+        'cost_per_1k_input_tokens': 0.00015,
+        'cost_per_1k_output_tokens': 0.0003,
         'max_tokens': 4000,
-        'description': 'Базовая модель Yandex'
+        'max_context_tokens': 8000,
+        'description': 'Базовая модель Yandex, быстрая и экономичная'
     },
     'yandexgpt': {
         'name': 'YandexGPT Pro',
         'model_uri': 'yandexgpt/latest',
-        'cost_per_1k_tokens': 0.0012,
+        'cost_per_1k_input_tokens': 0.0006,
+        'cost_per_1k_output_tokens': 0.0012,
         'max_tokens': 8000,
-        'description': 'Продвинутая модель Yandex'
+        'max_context_tokens': 16000,
+        'description': 'Продвинутая модель Yandex с улучшенным качеством'
     },
     # 'qwen': {
     #     'name': 'Qwen 2.5 32B',
     #     'model_uri': 'qwen/qwen-2.5-32b-instruct',
-    #     'cost_per_1k_tokens': 0.0008,
+    #     'cost_per_1k_input_tokens': 0.0004,
+    #     'cost_per_1k_output_tokens': 0.0008,
     #     'max_tokens': 32000,
-    #     'description': 'Мощная модель от Alibaba'
+    #     'max_context_tokens': 32000,
+    #     'description': 'Мощная модель от Alibaba с большим контекстом'
     # },
     # 'gemma': {
     #     'name': 'Gemma 2 9B',
     #     'model_uri': 'gemma/gemma-2-9b-it',
-    #     'cost_per_1k_tokens': 0.0005,
+    #     'cost_per_1k_input_tokens': 0.00025,
+    #     'cost_per_1k_output_tokens': 0.0005,
     #     'max_tokens': 16000,
-    #     'description': 'Эффективная модель от Google'
+    #     'max_context_tokens': 16000,
+    #     'description': 'Эффективная модель от Google, оптимизированная для диалогов'
     # }
 }
 
 # Базовые системные промпты для разных режимов
 SYSTEM_PROMPTS = {
     'default': 'Ты полезный ассистент. Отвечай вежливо и по существу.',
-
-    'json_format': """Ты полезный ассистент. Всегда отвечай в формате JSON со следующей структурой:
-    {
-        "response": "Твой основной ответ пользователю",
-        "sentiment": "нейтральный/положительный/отрицательный",
-        "confidence": 0.95,
-        "entities": ["список", "извлеченных", "сущностей"],
-        "intent": "намерение_пользователя",
-        "suggestions": ["предложение1", "предложение2"]
-    }
-
-    Правила:
-    1. Всегда возвращай валидный JSON
-    2. Поле "response" должно содержать текстовый ответ пользователю
-    3. Поле "sentiment" должно быть одним из: "положительный", "нейтральный", "отрицательный"
-    4. Поле "confidence" - число от 0 до 1 (уверенность в ответе)
-    5. Поле "entities" - массив строк с ключевыми сущностями из запроса
-    6. Поле "intent" - распознанное намерение пользователя
-    7. Поле "suggestions" - массив предложений для продолжения диалога
-
-    Не добавляй никаких дополнительных комментариев кроме JSON!""",
-
-    'tz_collection': """Ты - профессиональный аналитик, который собирает требования для Технического Задания (ТЗ).
-
-ТВОЯ ЗАДАЧА: В ходе диалога с заказчиком собрать всю необходимую информацию и сформировать финальное ТЗ в формате JSON.
-
-ПРАВИЛА РАБОТЫ:
-1. Задавай уточняющие вопросы по очереди, чтобы понять:
-   - Цели и задачи проекта
-   - Целевую аудиторию
-   - Функциональные требования
-   - Нефункциональные требования
-   - Ограничения и допущения
-   - Сроки и бюджет
-
-2. КОГДА ИНФОРМАЦИЯ ПОЛНОСТЬЮ СОБРАНА (ты задал все важные вопросы и получил ответы):
-   - СКАЖИ ТОЛЬКО ЭТО: "[TZ_COMPLETE]"
-   - и сразу после этого выведи ТЗ в формате JSON
-
-3. ФОРМАТ ФИНАЛЬНОГО ТЗ (структура JSON):
-{
-  "project_overview": {
-    "project_name": "Название проекта",
-    "description": "Описание проекта",
-    "goals": ["Цель 1", "Цель 2"],
-    "target_audience": "Описание ЦА"
-  },
-  "requirements": {
-    "functional": [
-      {
-        "id": "FR-001",
-        "description": "Описание функционального требования",
-        "priority": "высокий/средний/низкий"
-      }
-    ],
-    "non_functional": [
-      {
-        "id": "NFR-001",
-        "description": "Описание нефункционального требования",
-        "category": "производительность/безопасность/удобство"
-      }
-    ]
-  },
-  "constraints": {
-    "technical": ["Ограничение 1", "Ограничение 2"],
-    "business": ["Бизнес-ограничение 1"],
-    "assumptions": ["Допущение 1"]
-  },
-  "success_criteria": {
-    "kpis": ["KPI 1", "KPI 2"],
-    "acceptance_criteria": ["Критерий приемки 1"]
-  },
-  "metadata": {
-    "estimated_timeline": "Оценка сроков",
-    "budget_estimate": "Оценка бюджета",
-    "risks": ["Риск 1", "Риск 2"]
-  }
-}
-
-ВНИМАНИЕ:
-- Не форсируй завершение. Задавай достаточно вопросов.
-- [TZ_COMPLETE] - это специальный маркер, который говорит, что информация собрана.
-- После [TZ_COMPLETE] сразу выводи ТЗ в JSON без дополнительного текста.
-- Если информации недостаточно, продолжай задавать вопросы."""
+    'json_format': """Ты полезный ассистент. Всегда отвечай в формате JSON.""",
+    'tz_collection': """Ты - профессиональный аналитик, который собирает требования для Технического Задания."""
 }
 
 
@@ -174,11 +100,129 @@ def init_session():
         session['temperature'] = "0.7"
     if 'selected_model' not in session:
         session['selected_model'] = 'yandexgpt-lite'
+    # Статистика токенов
+    if 'total_input_tokens' not in session:
+        session['total_input_tokens'] = 0
+    if 'total_output_tokens' not in session:
+        session['total_output_tokens'] = 0
+    if 'total_cost' not in session:
+        session['total_cost'] = 0.0
 
 
 def get_model_config(model_key):
     """Получить конфигурацию модели по ключу"""
     return MODELS_CONFIG.get(model_key, MODELS_CONFIG['yandexgpt-lite'])
+
+
+def estimate_tokens(text):
+    """Примерная оценка количества токенов в тексте"""
+    if not text:
+        return 0
+
+    # Более простая и надежная оценка
+    # Примерно 1 токен на 4 символа для смешанного текста
+    return max(1, int(len(text) / 4))
+
+
+def analyze_response_behavior(input_tokens, output_tokens, temperature, response_text, model_config):
+    """Анализ поведения модели на основе токенов и температуры"""
+    # Убедимся, что все значения являются числами
+    try:
+        input_tokens = int(input_tokens) if input_tokens is not None else 0
+        output_tokens = int(output_tokens) if output_tokens is not None else 0
+        temperature = float(temperature) if temperature is not None else 0.7
+    except (ValueError, TypeError) as e:
+        logger.error(f"Ошибка преобразования типов в analyze_response_behavior: {e}")
+        input_tokens = 0
+        output_tokens = 0
+        temperature = 0.7
+
+    behavior_analysis = {
+        'efficiency_score': 0,
+        'verbosity_level': 'нормальный',
+        'temperature_effect': 'стандартный',
+        'structure': 'стандартная',
+        'recommendations': [],
+        'token_ratio': 0
+    }
+
+    # Рассчитываем соотношение токенов
+    if input_tokens > 0:
+        token_ratio = output_tokens / input_tokens
+        behavior_analysis['token_ratio'] = round(token_ratio, 2)
+
+        # Оценка эффективности
+        if input_tokens < 50:  # Короткий запрос
+            if output_tokens < 30:
+                behavior_analysis['efficiency_score'] = 30
+            elif output_tokens > 500:
+                behavior_analysis['efficiency_score'] = 90
+            else:
+                behavior_analysis['efficiency_score'] = 70
+        else:  # Длинный запрос
+            if token_ratio > 2:
+                behavior_analysis['efficiency_score'] = 90
+            elif token_ratio > 1:
+                behavior_analysis['efficiency_score'] = 80
+            elif token_ratio > 0.5:
+                behavior_analysis['efficiency_score'] = 60
+            else:
+                behavior_analysis['efficiency_score'] = 40
+
+    # Уровень многословности (используем int для сравнения)
+    if output_tokens < 30:
+        behavior_analysis['verbosity_level'] = 'очень краткий'
+    elif output_tokens < 100:
+        behavior_analysis['verbosity_level'] = 'краткий'
+    elif output_tokens < 300:
+        behavior_analysis['verbosity_level'] = 'нормальный'
+    elif output_tokens < 800:
+        behavior_analysis['verbosity_level'] = 'подробный'
+    else:
+        behavior_analysis['verbosity_level'] = 'очень подробный'
+
+    # Влияние температуры (используем float для сравнения)
+    if temperature < 0.2:
+        behavior_analysis['temperature_effect'] = 'очень детерминированный'
+    elif temperature < 0.4:
+        behavior_analysis['temperature_effect'] = 'детерминированный'
+    elif temperature < 0.7:
+        behavior_analysis['temperature_effect'] = 'сбалансированный'
+    elif temperature < 0.9:
+        behavior_analysis['temperature_effect'] = 'креативный'
+    else:
+        behavior_analysis['temperature_effect'] = 'очень креативный'
+
+    # Анализ структуры ответа
+    if not response_text:
+        response_text = ""
+
+    lines_count = response_text.count('\n') + 1
+    sentences_count = response_text.count('.') + response_text.count('!') + response_text.count('?')
+
+    if lines_count > 10 and sentences_count > 5:
+        behavior_analysis['structure'] = 'хорошо структурированный'
+    elif '```' in response_text or '```json' in response_text:
+        behavior_analysis['structure'] = 'код/структурированный'
+    elif response_text.count('\n') > 5:
+        behavior_analysis['structure'] = 'многострочный'
+    elif len(response_text.split()) < 50:
+        behavior_analysis['structure'] = 'конспективный'
+    else:
+        behavior_analysis['structure'] = 'сплошной текст'
+
+    # Рекомендации
+    if behavior_analysis.get('token_ratio', 0) > 3:
+        behavior_analysis['recommendations'].append('Модель генерирует очень подробные ответы')
+    elif behavior_analysis.get('token_ratio', 0) < 0.3:
+        behavior_analysis['recommendations'].append('Ответы слишком кратки, попробуйте увеличить max_tokens')
+
+    if temperature < 0.3 and output_tokens < 100:
+        behavior_analysis['recommendations'].append('Низкая температура делает ответы краткими')
+    elif temperature > 0.8 and output_tokens > 500:
+        behavior_analysis['recommendations'].append('Высокая температура может создавать избыточный текст')
+
+    return behavior_analysis
 
 
 def call_yandex_api(model_config, messages, temperature, max_tokens):
@@ -192,11 +236,15 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
         'modelUri': f'gpt://{YANDEX_FOLDER_ID}/{model_config["model_uri"]}',
         'completionOptions': {
             'stream': False,
-            'temperature': temperature,
-            'maxTokens': max_tokens
+            'temperature': float(temperature),  # Убедимся, что это float
+            'maxTokens': int(max_tokens)  # Убедимся, что это int
         },
         'messages': messages
     }
+
+    # Оцениваем количество входных токенов
+    input_text = ' '.join([msg['text'] for msg in messages])
+    estimated_input_tokens = estimate_tokens(input_text)
 
     # Замер времени выполнения
     start_time = time.time()
@@ -206,29 +254,52 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
 
     if response.status_code != 200:
         logger.error(f"API Error {response.status_code}: {response.text}")
-        return None, execution_time, 0, 0.0
+        return None, execution_time, estimated_input_tokens, 0, 0.0
 
     result = response.json()
 
     # Получаем количество токенов из ответа
-    total_tokens = 0
+    input_tokens = estimated_input_tokens
+    output_tokens = 0
+
     try:
+        # Извлекаем ответ
+        response_text = ""
+        if 'result' in result and 'alternatives' in result['result']:
+            response_text = result['result']['alternatives'][0]['message']['text']
+        elif 'alternatives' in result:
+            response_text = result['alternatives'][0]['message']['text']
+        else:
+            response_text = extract_message_from_response(result)
+
+        # Оцениваем выходные токены
+        output_tokens = estimate_tokens(response_text)
+
+        # Пытаемся получить точные значения из API
         if 'result' in result and 'usage' in result['result']:
-            total_tokens = int(result['result']['usage'].get('totalTokens', 0))
+            usage = result['result']['usage']
+            input_tokens = int(usage.get('inputTextTokens', estimated_input_tokens))
+            output_tokens = int(usage.get('completionTokens', output_tokens))
         elif 'usage' in result:
-            total_tokens = int(result['usage'].get('totalTokens', 0))
-    except (ValueError, TypeError, KeyError) as e:
-        logger.error(f"Ошибка при получении количества токенов: {e}")
-        total_tokens = 0
+            usage = result['usage']
+            input_tokens = int(usage.get('inputTextTokens', estimated_input_tokens))
+            output_tokens = int(usage.get('completionTokens', output_tokens))
+
+    except (KeyError, IndexError, ValueError, TypeError) as e:
+        logger.error(f"Ошибка при обработке ответа API: {e}")
+        # Используем оценки
+        output_tokens = estimate_tokens(extract_message_from_response(result))
 
     # Рассчитываем стоимость
     try:
-        cost = (total_tokens / 1000.0) * float(model_config['cost_per_1k_tokens'])
+        input_cost = (input_tokens / 1000.0) * float(model_config['cost_per_1k_input_tokens'])
+        output_cost = (output_tokens / 1000.0) * float(model_config['cost_per_1k_output_tokens'])
+        total_cost = input_cost + output_cost
     except (TypeError, ValueError) as e:
         logger.error(f"Ошибка при расчете стоимости: {e}")
-        cost = 0.0
+        total_cost = 0.0
 
-    return result, execution_time, total_tokens, cost
+    return result, execution_time, input_tokens, output_tokens, total_cost
 
 
 @app.route('/')
@@ -242,7 +313,10 @@ def index():
                            temperature=session['temperature'],
                            current_role=session.get('current_role_name', 'Обычный ассистент'),
                            models=MODELS_CONFIG,
-                           selected_model=session.get('selected_model', 'yandexgpt-lite'))
+                           selected_model=session.get('selected_model', 'yandexgpt-lite'),
+                           total_input_tokens=session.get('total_input_tokens', 0),
+                           total_output_tokens=session.get('total_output_tokens', 0),
+                           total_cost=session.get('total_cost', 0))
 
 
 @app.route('/send_message', methods=['POST'])
@@ -285,6 +359,8 @@ def send_message():
             return reset_role()
         elif user_message.lower() in ['/help', '/commands', '/?']:
             return show_help()
+        elif user_message.lower() == '/stats':
+            return show_stats()
 
         # Получаем текущий режим чата
         chat_mode = session.get('chat_mode', 'default')
@@ -344,16 +420,16 @@ def send_message():
 
         # Настраиваем параметры в зависимости от режима
         if actual_mode == 'json_format':
-            max_tokens = min(1500, model_config['max_tokens'])
+            max_tokens = min(1500, int(model_config['max_tokens']))
         elif actual_mode == 'tz_collection':
-            max_tokens = min(2000, model_config['max_tokens'])
+            max_tokens = min(2000, int(model_config['max_tokens']))
         elif session.get('custom_system_prompt'):
-            max_tokens = min(2000, model_config['max_tokens'])
+            max_tokens = min(2000, int(model_config['max_tokens']))
         else:
-            max_tokens = min(1500, model_config['max_tokens'])
+            max_tokens = min(1500, int(model_config['max_tokens']))
 
         # Вызываем API с замером метрик
-        result, execution_time, total_tokens, cost = call_yandex_api(
+        result, execution_time, input_tokens, output_tokens, cost = call_yandex_api(
             model_config, messages, temperature_val, max_tokens
         )
 
@@ -373,95 +449,38 @@ def send_message():
             logger.error(f"Ошибка при извлечении ответа: {e}")
             assistant_message = "Не удалось получить ответ от модели."
 
+        # Убедимся, что токены - целые числа
+        try:
+            input_tokens = int(input_tokens)
+            output_tokens = int(output_tokens)
+        except (ValueError, TypeError):
+            input_tokens = estimate_tokens(' '.join([msg['text'] for msg in messages]))
+            output_tokens = estimate_tokens(assistant_message)
+
+        # Анализируем поведение модели на основе токенов и температуры
+        behavior_analysis = analyze_response_behavior(
+            input_tokens, output_tokens, temperature_val, assistant_message, model_config
+        )
+
+        # Обновляем общую статистику токенов
+        session['total_input_tokens'] = session.get('total_input_tokens', 0) + input_tokens
+        session['total_output_tokens'] = session.get('total_output_tokens', 0) + output_tokens
+        session['total_cost'] = session.get('total_cost', 0.0) + cost
+
         # Обработка в зависимости от режима
         parsed_response = None
         final_assistant_message = assistant_message
 
-        if actual_mode == 'tz_collection':
-            # Проверяем, содержит ли ответ маркер завершения ТЗ
-            if '[TZ_COMPLETE]' in assistant_message:
-                # Извлекаем JSON после маркера
-                json_start = assistant_message.find('[TZ_COMPLETE]') + len('[TZ_COMPLETE]')
-                json_text = assistant_message[json_start:].strip()
-
-                # Пытаемся распарсить JSON
-                try:
-                    json_match = re.search(r'\{.*\}', json_text, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
-                        tz_data = json.loads(json_str)
-
-                        # Сохраняем собранные данные
-                        session['tz_data'] = tz_data
-                        session['tz_complete'] = True
-
-                        # Формируем финальное сообщение
-                        final_assistant_message = f'✅ Техническое Задание сформировано!\n\n```json\n{json.dumps(tz_data, ensure_ascii=False, indent=2)}\n```'
-
-                        # Добавляем в историю только финальное сообщение
-                        chat_history = [{
-                            'role': 'assistant',
-                            'text': final_assistant_message
-                        }]
-
-                        return jsonify({
-                            'response': final_assistant_message,
-                            'tz_complete': True,
-                            'tz_data': tz_data,
-                            'history': chat_history,
-                            'chat_mode': chat_mode,
-                            'temperature': temperature_val,
-                            'require_json': require_json,
-                            'current_role': session.get('current_role_name', 'Обычный ассистент'),
-                            'model': model_key,
-                            'model_name': model_config['name'],
-                            'execution_time': round(execution_time, 2),
-                            'total_tokens': total_tokens,
-                            'cost': round(cost, 5)
-                        })
-                    else:
-                        assistant_message = assistant_message.replace('[TZ_COMPLETE]', '')
-                except json.JSONDecodeError as e:
-                    logger.error(f"Ошибка парсинга JSON ТЗ: {str(e)}")
-                    assistant_message = assistant_message.replace('[TZ_COMPLETE]', '')
-
-        elif actual_mode == 'json_format':
+        if actual_mode == 'json_format':
             # Пытаемся распарсить JSON ответ
             try:
                 json_match = re.search(r'\{.*\}', assistant_message, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
                     parsed_response = json.loads(json_str)
-
-                    # Проверяем обязательные поля
-                    if 'response' not in parsed_response:
-                        parsed_response['response'] = assistant_message
-
-                    # Форматируем JSON для отображения
                     final_assistant_message = json.dumps(parsed_response, ensure_ascii=False, indent=2)
-                else:
-                    parsed_response = {
-                        "response": assistant_message,
-                        "sentiment": "нейтральный",
-                        "confidence": 0.5,
-                        "entities": [],
-                        "intent": "unknown",
-                        "suggestions": []
-                    }
-                    final_assistant_message = json.dumps(parsed_response, ensure_ascii=False, indent=2)
-
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error: {str(e)}")
-                parsed_response = {
-                    "response": assistant_message,
-                    "error": "Не удалось сгенерировать валидный JSON",
-                    "sentiment": "neutral",
-                    "confidence": 0.1,
-                    "entities": [],
-                    "intent": "unknown",
-                    "suggestions": []
-                }
-                final_assistant_message = json.dumps(parsed_response, ensure_ascii=False, indent=2)
+            except json.JSONDecodeError:
+                pass  # Оставляем оригинальный текст
 
         # Добавляем ответ ассистента в историю
         chat_history.append({'role': 'assistant', 'text': final_assistant_message})
@@ -487,8 +506,16 @@ def send_message():
             'model': model_key,
             'model_name': model_config['name'],
             'execution_time': round(execution_time, 2),
-            'total_tokens': total_tokens,
-            'cost': round(cost, 5)
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'total_tokens': input_tokens + output_tokens,
+            'cost': round(cost, 5),
+            'behavior_analysis': behavior_analysis,
+            'token_stats': {
+                'total_input': session['total_input_tokens'],
+                'total_output': session['total_output_tokens'],
+                'total_cost': session['total_cost']
+            }
         }
 
         if parsed_response:
@@ -496,8 +523,8 @@ def send_message():
         if session.get('tz_data'):
             response_data['tz_data'] = session['tz_data']
 
-        logger.info(
-            f"Отправляем ответ: model={model_key}, tokens={total_tokens}, time={execution_time:.2f}s, cost={cost:.5f} руб")
+        logger.info(f"Модель: {model_key}, Вход: {input_tokens}, Выход: {output_tokens}, "
+                    f"Время: {execution_time:.2f}с, Стоимость: {cost:.5f} руб")
 
         return jsonify(response_data)
 
@@ -533,15 +560,15 @@ def handle_role_command(user_message):
 
         predefined_roles = {
             'инженер': {
-                'prompt': 'Ты — инженер-прагматик с 20-летним стажем. Ты ненавидишь расплывчатые формулировки, требуешь точности и конкретики. Ты веришь только данным, логике и проверенным решениям. Твои ответы структурированы, ты любишь списки "за" и "против". Ты всегда ищешь подвох и скрытые риски в любой идее. Твой девиз: "Если что-то работает, не трогай это. Если не работает — найди спецификацию".',
+                'prompt': 'Ты — инженер-прагматик с 20-летним стажем.',
                 'name': 'Инженер'
             },
             'режиссер': {
-                'prompt': 'Ты — знаменитый режиссёр с безграничной фантазией. Ты видишь мир через призму кино, метафор и архетипов. Твои ответы полны визуальных образов, ты мыслишь историями и персонажами. Ты обожаешь гиперболу, драматизацию и неожиданные повороты. Технические детали для тебя лишь фон для большой человеческой драмы. Твой главный вопрос всегда: "А где здесь конфликт и эмоция?".',
+                'prompt': 'Ты — знаменитый режиссёр с безграничной фантазией.',
                 'name': 'Режиссер'
             },
             'бабушка': {
-                'prompt': 'Ты — добрая, мудрая бабушка, которая повидала многое на своём веку. Ты говоришь просто, с теплотой и лёгкой грустью. Ты веришь в народную мудрость, интуицию и важность простых человеческих ценностей: семья, покой, доброта. Ты любишь вспоминать аналогии из жизни, давать утешительные и практические советы. Технологии ты оцениваешь с точки зрения того, делают ли они людей счастливее. В твоих ответах всегда есть лёгкий налёт ностальгии.',
+                'prompt': 'Ты — добрая, мудрая бабушка, которая повидала многое на своём веку.',
                 'name': 'Бабушка'
             }
         }
@@ -665,6 +692,29 @@ def reset_role():
     })
 
 
+def show_stats():
+    """Показать статистику использования токенов"""
+    total_input = session.get('total_input_tokens', 0)
+    total_output = session.get('total_output_tokens', 0)
+    total_cost = session.get('total_cost', 0.0)
+
+    stats_text = f"""
+📊 **Статистика использования токенов:**
+
+• Всего входных токенов: {total_input}
+• Всего выходных токенов: {total_output}
+• Всего токенов: {total_input + total_output}
+• Общая стоимость: {total_cost:.5f} руб
+"""
+
+    return jsonify({
+        'response': stats_text,
+        'is_command': True,
+        'current_role': session.get('current_role_name', 'Обычный ассистент'),
+        'history_count': len(session.get('chat_history', []))
+    })
+
+
 def show_help():
     """Показать справку по командам"""
     help_text = """
@@ -673,6 +723,7 @@ def show_help():
 /role [инженер|режиссер|бабушка] - сменить роль
 /system [промпт] - установить произвольный промпт
 /reset - сбросить роль
+/stats - показать статистику токенов
 /help - показать справку
 """
     return jsonify({
@@ -730,16 +781,25 @@ def clear_history():
     session['chat_history'] = []
     session['tz_data'] = None
     session['tz_complete'] = False
+    # Сбрасываем статистику
+    session['total_input_tokens'] = 0
+    session['total_output_tokens'] = 0
+    session['total_cost'] = 0.0
     session.modified = True
 
-    system_message = "🗑️ История диалога очищена."
+    system_message = "🗑️ История диалога и статистика очищены."
 
     return jsonify({
         'success': True,
         'response': system_message,
         'history': [{'role': 'system', 'text': system_message}],
         'current_role': session.get('current_role_name', 'Обычный ассистент'),
-        'history_count': 0
+        'history_count': 0,
+        'token_stats': {
+            'total_input': 0,
+            'total_output': 0,
+            'total_cost': 0
+        }
     })
 
 
@@ -769,7 +829,12 @@ def get_session_info():
         'session_id': session.get('session_id'),
         'current_role': session.get('current_role_name', 'Обычный ассистент'),
         'has_custom_prompt': bool(session.get('custom_system_prompt')),
-        'selected_model': session.get('selected_model', 'yandexgpt-lite')
+        'selected_model': session.get('selected_model', 'yandexgpt-lite'),
+        'token_stats': {
+            'total_input': session.get('total_input_tokens', 0),
+            'total_output': session.get('total_output_tokens', 0),
+            'total_cost': session.get('total_cost', 0.0)
+        }
     })
 
 
