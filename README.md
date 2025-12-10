@@ -38,3 +38,9 @@ video - https://disk.yandex.ru/d/nFJPusHNH-wkzQ
 ![](res/task7.png)
 
 video - https://disk.yandex.ru/d/Hg8RtXNaSbdjzw
+
+## Task #8
+
+![](res/task8.png)
+
+video - https://disk.yandex.ru/d/nfbE8imHKsu-VQ

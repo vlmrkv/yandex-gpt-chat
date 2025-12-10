@@ -15,6 +15,121 @@
             background-color: #4a6fa5 !important;
             color: white !important;
         }
+
+        .behavior-analysis {
+            margin-top: 10px;
+            padding: 10px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 8px;
+            border-left: 4px solid #4a6fa5;
+            font-size: 13px;
+        }
+
+        .behavior-metric {
+            display: inline-block;
+            margin-right: 15px;
+            padding: 3px 8px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+
+        .token-breakdown {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+            flex-wrap: wrap;
+        }
+
+        .token-type {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .input-token {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
+        }
+
+        .output-token {
+            background: #e8f5e9;
+            color: #388e3c;
+            border: 1px solid #c8e6c9;
+        }
+
+        .total-token {
+            background: #fff3e0;
+            color: #f57c00;
+            border: 1px solid #ffe0b2;
+        }
+
+        .recommendations {
+            margin-top: 8px;
+            padding: 8px;
+            background: #fff8e1;
+            border-radius: 4px;
+            border-left: 3px solid #ffc107;
+            font-size: 12px;
+        }
+
+        .efficiency-score {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        .score-high {
+            background: #4caf50;
+            color: white;
+        }
+
+        .score-medium {
+            background: #ff9800;
+            color: white;
+        }
+
+        .score-low {
+            background: #f44336;
+            color: white;
+        }
+
+        .stats-panel {
+            background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body>
@@ -26,6 +141,29 @@
             <span class="status-text">Проверка подключения...</span>
         </div>
     </header>
+
+    <!-- Статистика токенов -->
+    <div class="stats-panel" id="statsPanel">
+        <h3><i class="fas fa-chart-bar"></i> Статистика токенов</h3>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" id="totalInputTokens">{{ total_input_tokens }}</div>
+                <div class="stat-label">Входные токены</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalOutputTokens">{{ total_output_tokens }}</div>
+                <div class="stat-label">Выходные токены</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalTokens">{{ total_input_tokens + total_output_tokens }}</div>
+                <div class="stat-label">Всего токенов</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalCost">{{ "%.5f"|format(total_cost) }}</div>
+                <div class="stat-label">Стоимость (руб)</div>
+            </div>
+        </div>
+    </div>
 
     <!-- Панель моделей -->
     <div class="models-panel">
@@ -56,7 +194,7 @@
             <i class="fas fa-database"></i>
             Сообщений: <span id="historyCount">0</span> |
             Модель: <span id="currentModel">-</span> |
-            Температура: <span id="currentTemperature">0.7</span>
+            Температура: <span id="currentTemperature">{{ temperature }}</span>
         </div>
     </div>
 
@@ -71,14 +209,20 @@
                 <div class="temperature-control">
                     <label><i class="fas fa-thermometer-half"></i> Температура:</label>
                     <select id="temperatureSelect">
-                        <option value="0">0 (точный)</option>
-                        <option value="0.3">0.3 (структурированный)</option>
-                        <option value="0.7" selected>0.7 (баланс)</option>
-                        <option value="1.0">1.0 (творческий)</option>
+                        <option value="0" {% if temperature|float == 0 %}selected{% endif %}>0 (точный)</option>
+                        <option value="0.3" {% if temperature|float == 0.3 %}selected{% endif %}>0.3 (структурированный)</option>
+                        <option value="0.7" {% if temperature|float == 0.7 %}selected{% endif %}>0.7 (баланс)</option>
+                        <option value="1.0" {% if temperature|float == 1.0 %}selected{% endif %}>1.0 (творческий)</option>
                     </select>
                     <div class="temperature-info">
                         <i class="fas fa-info-circle"></i>
-                        <span id="tempDescText">Баланс креативности и точности</span>
+                        <span id="tempDescText">
+                            {% if temperature|float == 0 %}Точные и детерминированные ответы
+                            {% elif temperature|float == 0.3 %}Структурированные ответы
+                            {% elif temperature|float == 0.7 %}Баланс креативности и точности
+                            {% elif temperature|float == 1.0 %}Креативные и разнообразные ответы
+                            {% else %}Температура модели{% endif %}
+                        </span>
                     </div>
                 </div>
 
@@ -86,6 +230,13 @@
                     <label>
                         <input type="checkbox" id="jsonFormat">
                         <i class="fas fa-code"></i> Получить ответ в формате JSON
+                    </label>
+                </div>
+
+                <div class="option">
+                    <label>
+                        <input type="checkbox" id="showBehaviorAnalysis" checked>
+                        <i class="fas fa-chart-line"></i> Показывать анализ поведения
                     </label>
                 </div>
             </div>
@@ -104,16 +255,19 @@
                 <button onclick="exportHistory()">
                     <i class="fas fa-file-export"></i> Экспорт
                 </button>
+                <button onclick="showTokenStats()">
+                    <i class="fas fa-chart-pie"></i> Статистика
+                </button>
                 <div class="stats">
-                    <i class="fas fa-chart-line"></i>
-                    <span id="currentStats">-</span>
+                    <i class="fas fa-bolt"></i>
+                    <span id="currentStats">Запросов: 0 | Токены: 0</span>
                 </div>
             </div>
         </div>
     </div>
 
     <footer class="footer">
-        <p>Powered by Yandex Cloud API</p>
+        <p>Powered by Yandex Cloud API | Анализ токенов и поведения моделей</p>
     </footer>
 </div>
 
@@ -125,12 +279,10 @@
 
 <script>
 // Глобальные переменные
-let currentMode = 'default';
-let currentModel = 'yandexgpt-lite';
+let currentMode = '{{ chat_mode }}';
+let currentModel = '{{ selected_model }}';
 let models = {};
-let totalTokens = 0;
-let totalCost = 0;
-let totalTime = 0;
+let requestCount = 0;
 let isSendingMessage = false;
 
 // Инициализация
@@ -139,6 +291,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadModels();
     updateTemperatureDescription();
     updateSessionInfo();
+    updateStatsPanel();
 
     document.getElementById('temperatureSelect').addEventListener('change', updateTemperatureDescription);
     document.getElementById('messageInput').addEventListener('keydown', function(e) {
@@ -147,6 +300,12 @@ document.addEventListener('DOMContentLoaded', async function() {
             sendMessage();
         }
     });
+
+    // Инициализируем активные кнопки режимов
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`.mode-btn[onclick*="${currentMode}"]`).classList.add('active');
 
     document.getElementById('messageInput').focus();
 });
@@ -160,8 +319,8 @@ async function loadModels() {
             renderModelButtons();
 
             // Устанавливаем модель по умолчанию
-            if (models['yandexgpt-lite']) {
-                setModel('yandexgpt-lite');
+            if (models[currentModel]) {
+                setModel(currentModel);
             }
         }
     } catch (error) {
@@ -177,7 +336,7 @@ function renderModelButtons() {
     Object.keys(models).forEach(modelKey => {
         const model = models[modelKey];
         const button = document.createElement('button');
-        button.className = 'model-btn';
+        button.className = `model-btn ${modelKey === currentModel ? 'active' : ''}`;
         button.innerHTML = `<i class="fas fa-microchip"></i> ${model.name}`;
         button.onclick = () => setModel(modelKey);
         container.appendChild(button);
@@ -202,7 +361,7 @@ function setModel(modelKey) {
     document.getElementById('modelDescription').innerHTML = `
         <strong>${model.name}</strong><br>
         ${model.description}<br>
-        <small>Макс. токенов: ${model.max_tokens} | Цена: ${model.cost_per_1k_tokens} руб/1K токенов</small>
+        <small>Входные токены: ${model.cost_per_1k_input_tokens} руб/1K | Выходные: ${model.cost_per_1k_output_tokens} руб/1K</small>
     `;
 }
 
@@ -271,18 +430,14 @@ async function sendMessage() {
         } else if (data.is_command) {
             addMessage('system', data.response);
         } else {
-            addMessage('assistant', data.response, {
-                execution_time: data.execution_time,
-                total_tokens: data.total_tokens,
-                cost: data.cost,
-                model_name: data.model_name
-            });
+            // Добавляем сообщение с анализом поведения
+            const showAnalysis = document.getElementById('showBehaviorAnalysis').checked;
+            addMessageWithAnalysis('assistant', data.response, data, showAnalysis);
 
             // Обновляем статистику
-            totalTokens += data.total_tokens || 0;
-            totalCost += data.cost || 0;
-            totalTime += data.execution_time || 0;
-            updateStats();
+            requestCount++;
+            updateStatsPanel(data.token_stats);
+            updateCurrentStats(data);
         }
 
         // Обновляем информацию о сессии
@@ -298,22 +453,67 @@ async function sendMessage() {
     }
 }
 
-// Добавление сообщения
-function addMessage(role, content, metrics = null) {
+// Добавление сообщения с анализом поведения
+function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
     const container = document.getElementById('chatHistory');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}-message`;
 
-    let metricsHTML = '';
-    if (metrics) {
-        metricsHTML = `
-            <div class="message-metrics">
-                <small>
-                    <i class="fas fa-clock"></i> ${metrics.execution_time}с |
-                    <i class="fas fa-hashtag"></i> ${metrics.total_tokens} токенов |
-                    <i class="fas fa-ruble-sign"></i> ${metrics.cost.toFixed(5)} руб |
-                    <i class="fas fa-brain"></i> ${metrics.model_name}
-                </small>
+    // Основные метрики
+    const inputTokens = data.input_tokens || 0;
+    const outputTokens = data.output_tokens || 0;
+    const totalTokens = inputTokens + outputTokens;
+    const tokenRatio = data.input_tokens > 0 ? (data.output_tokens / data.input_tokens).toFixed(2) : 'N/A';
+    const cost = data.cost || 0;
+    const executionTime = data.execution_time || 0;
+
+    // Анализ поведения
+    let analysisHTML = '';
+    if (showAnalysis && data.behavior_analysis) {
+        const analysis = data.behavior_analysis;
+        const efficiencyScore = analysis.efficiency_score || 0;
+        const scoreClass = efficiencyScore > 70 ? 'score-high' :
+                          efficiencyScore > 40 ? 'score-medium' : 'score-low';
+
+        analysisHTML = `
+            <div class="behavior-analysis">
+                <div class="token-breakdown">
+                    <span class="token-type input-token">
+                        <i class="fas fa-sign-in-alt"></i> Вход: ${inputTokens}
+                    </span>
+                    <span class="token-type output-token">
+                        <i class="fas fa-sign-out-alt"></i> Выход: ${outputTokens}
+                    </span>
+                    <span class="token-type total-token">
+                        <i class="fas fa-hashtag"></i> Всего: ${totalTokens}
+                    </span>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <span class="behavior-metric">
+                        <i class="fas fa-tachometer-alt"></i> Эффективность:
+                        <span class="efficiency-score ${scoreClass}">${efficiencyScore}%</span>
+                    </span>
+                    <span class="behavior-metric">
+                        <i class="fas fa-comment"></i> Уровень: ${analysis.verbosity_level || 'нормальный'}
+                    </span>
+                    <span class="behavior-metric">
+                        <i class="fas fa-temperature-high"></i> Температура: ${analysis.temperature_effect || 'стандартный'}
+                    </span>
+                    <span class="behavior-metric">
+                        <i class="fas fa-layer-group"></i> Структура: ${analysis.structure || 'стандартная'}
+                    </span>
+                    <span class="behavior-metric">
+                        <i class="fas fa-balance-scale"></i> Соотношение: ${tokenRatio}:1
+                    </span>
+                </div>
+
+                ${analysis.recommendations && analysis.recommendations.length > 0 ? `
+                    <div class="recommendations">
+                        <strong><i class="fas fa-lightbulb"></i> Рекомендации:</strong><br>
+                        ${analysis.recommendations.map(rec => `• ${rec}`).join('<br>')}
+                    </div>
+                ` : ''}
             </div>
         `;
     }
@@ -325,18 +525,70 @@ function addMessage(role, content, metrics = null) {
             <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
         </div>
         <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
-        ${metricsHTML}
+        <div class="message-metrics">
+            <small>
+                <i class="fas fa-clock"></i> ${executionTime}с |
+                <i class="fas fa-sign-in-alt"></i> ${inputTokens} вх. |
+                <i class="fas fa-sign-out-alt"></i> ${outputTokens} вых. |
+                <i class="fas fa-hashtag"></i> ${totalTokens} всего |
+                <i class="fas fa-ruble-sign"></i> ${cost.toFixed(5)} руб |
+                <i class="fas fa-brain"></i> ${data.model_name || currentModel}
+            </small>
+        </div>
+        ${analysisHTML}
     `;
 
     container.appendChild(messageDiv);
 }
 
-// Обновление статистики
-function updateStats() {
-    const statsElement = document.getElementById('currentStats');
-    statsElement.innerHTML = `
-        ${totalTokens} токенов | ${totalCost.toFixed(5)} руб | ${totalTime.toFixed(1)}с
+// Простое добавление сообщения
+function addMessage(role, content) {
+    const container = document.getElementById('chatHistory');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role}-message`;
+
+    messageDiv.innerHTML = `
+        <div class="message-header">
+            <i class="fas ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i>
+            <strong>${role === 'user' ? 'Вы' : 'Ассистент'}</strong>
+            <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+        </div>
+        <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
     `;
+
+    container.appendChild(messageDiv);
+}
+
+// Обновление панели статистики
+function updateStatsPanel(stats = null) {
+    if (stats) {
+        document.getElementById('totalInputTokens').textContent = stats.total_input || 0;
+        document.getElementById('totalOutputTokens').textContent = stats.total_output || 0;
+        document.getElementById('totalTokens').textContent = (stats.total_input || 0) + (stats.total_output || 0);
+        document.getElementById('totalCost').textContent = stats.total_cost ? stats.total_cost.toFixed(5) : '0.00000';
+    } else {
+        // Загружаем статистику с сервера
+        fetch('/get_session_info')
+            .then(response => response.json())
+            .then(data => {
+                if (data.token_stats) {
+                    document.getElementById('totalInputTokens').textContent = data.token_stats.total_input || 0;
+                    document.getElementById('totalOutputTokens').textContent = data.token_stats.total_output || 0;
+                    document.getElementById('totalTokens').textContent =
+                        (data.token_stats.total_input || 0) + (data.token_stats.total_output || 0);
+                    document.getElementById('totalCost').textContent =
+                        data.token_stats.total_cost ? data.token_stats.total_cost.toFixed(5) : '0.00000';
+                }
+            });
+    }
+}
+
+// Обновление текущей статистики
+function updateCurrentStats(data) {
+    const statsElement = document.getElementById('currentStats');
+    const totalRequests = requestCount;
+    const totalTokens = (data.token_stats?.total_input || 0) + (data.token_stats?.total_output || 0);
+    statsElement.innerHTML = `Запросов: ${totalRequests} | Токены: ${totalTokens}`;
 }
 
 // Обновление информации о сессии
@@ -346,7 +598,11 @@ async function updateSessionInfo() {
         if (response.ok) {
             const data = await response.json();
             document.getElementById('historyCount').textContent = data.history_length || 0;
-            document.getElementById('currentTemperature').textContent = data.temperature || '0.7';
+            if (data.temperature !== undefined) {
+                document.getElementById('currentTemperature').textContent = data.temperature;
+                document.getElementById('temperatureSelect').value = parseFloat(data.temperature);
+                updateTemperatureDescription();
+            }
         }
     } catch (error) {
         console.error('Ошибка обновления сессии:', error);
@@ -364,6 +620,29 @@ function updateTemperatureDescription() {
         case 0.7: desc.textContent = 'Баланс креативности и точности'; break;
         case 1.0: desc.textContent = 'Креативные и разнообразные ответы'; break;
         default: desc.textContent = 'Температура модели';
+    }
+}
+
+// Показать статистику токенов
+async function showTokenStats() {
+    try {
+        const response = await fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: '/stats',
+                model: currentModel,
+                temperature: parseFloat(document.getElementById('temperatureSelect').value)
+            })
+        });
+
+        const data = await response.json();
+        if (data.response) {
+            addMessage('system', data.response);
+            updateStatsPanel();
+        }
+    } catch (error) {
+        console.error('Ошибка получения статистики:', error);
     }
 }
 
@@ -407,17 +686,19 @@ async function checkApiStatus() {
 
 // Очистка истории
 async function clearHistory() {
-    if (!confirm('Очистить историю диалога?')) return;
+    if (!confirm('Очистить историю диалога и статистику?')) return;
 
     try {
         const response = await fetch('/clear_history', {method: 'POST'});
         if (response.ok) {
             document.getElementById('chatHistory').innerHTML = '';
-            totalTokens = 0;
-            totalCost = 0;
-            totalTime = 0;
-            updateStats();
+            requestCount = 0;
+            updateCurrentStats({token_stats: {total_input: 0, total_output: 0}});
+            updateStatsPanel({total_input: 0, total_output: 0, total_cost: 0});
             updateSessionInfo();
+
+            // Добавляем сообщение об очистке
+            addMessage('system', '🗑️ История диалога и статистика очищены.');
         }
     } catch (error) {
         console.error('Ошибка очистки истории:', error);
@@ -428,15 +709,22 @@ async function clearHistory() {
 async function exportHistory() {
     const messages = Array.from(document.querySelectorAll('.message')).map(msg => ({
         sender: msg.querySelector('strong').textContent,
-        content: msg.querySelector('.message-content').textContent
+        content: msg.querySelector('.message-content').textContent,
+        type: msg.classList.contains('user-message') ? 'user' : 'assistant'
     }));
+
+    // Получаем статистику
+    const statsResponse = await fetch('/get_session_info');
+    const statsData = await statsResponse.json();
 
     const exportData = {
         messages: messages,
-        stats: {
-            total_tokens: totalTokens,
-            total_cost: totalCost,
-            total_time: totalTime
+        stats: statsData.token_stats || {},
+        metadata: {
+            export_date: new Date().toISOString(),
+            model: currentModel,
+            mode: currentMode,
+            total_requests: requestCount
         }
     };
 
@@ -444,7 +732,7 @@ async function exportHistory() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chat_export_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `chat_analysis_${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
