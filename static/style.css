@@ -611,3 +611,99 @@ textarea:focus {
 .assistant-message .message-metrics i {
     color: #4CAF50;
 }
+/* Стили для компрессии истории */
+
+.compression-stats {
+    background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin: 20px 30px;
+}
+
+.compression-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: #4caf50;
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
+
+.compression-event {
+    background: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.compression-event i {
+    color: #4caf50;
+    margin-right: 5px;
+}
+
+.compression-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: #4caf50;
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: 8px;
+}
+
+/* Сообщения системы о компрессии */
+.system-message .compression-info {
+    background: #e8f5e9;
+    border-left: 3px solid #4caf50;
+    padding: 8px;
+    margin-top: 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Универсальный YandexGPT Агент</title>
+    <title>Универсальный YandexGPT Агент с Компрессией</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -130,12 +130,97 @@
             font-size: 12px;
             opacity: 0.9;
         }
+
+        .compression-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: #4caf50;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+
+        .compression-stats {
+            background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .compression-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #4caf50;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .compression-event {
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .compression-event i {
+            color: #4caf50;
+            margin-right: 5px;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <header class="header">
-        <h1><i class="fas fa-robot"></i> Универсальный YandexGPT Агент</h1>
+        <h1><i class="fas fa-robot"></i> Универсальный YandexGPT Агент с Компрессией</h1>
         <div class="api-status" id="apiStatus">
             <span class="status-dot"></span>
             <span class="status-text">Проверка подключения...</span>
@@ -161,6 +246,34 @@
             <div class="stat-item">
                 <div class="stat-value" id="totalCost">{{ "%.5f"|format(total_cost) }}</div>
                 <div class="stat-label">Стоимость (руб)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Статистика компрессии -->
+    <div class="compression-stats" id="compressionStats" style="display: {% if compression_stats.total_compressions > 0 %}block{% else %}none{% endif %};">
+        <h3><i class="fas fa-compress-alt"></i> Статистика компрессии</h3>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" id="totalCompressions">{{ compression_stats.total_compressions }}</div>
+                <div class="stat-label">Сжатий</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="tokensSaved">{{ compression_stats.tokens_saved }}</div>
+                <div class="stat-label">Токенов сэкономлено</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="compressionRatio">{{ compression_stats.compression_ratio }}%</div>
+                <div class="stat-label">Коэффициент сжатия</div>
+            </div>
+            <div class="stat-item">
+                <div class="compression-toggle">
+                    <label class="switch">
+                        <input type="checkbox" id="compressionToggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <span id="compressionStatus">Компрессия включена</span>
+                </div>
             </div>
         </div>
     </div>
@@ -195,6 +308,9 @@
             Сообщений: <span id="historyCount">0</span> |
             Модель: <span id="currentModel">-</span> |
             Температура: <span id="currentTemperature">{{ temperature }}</span>
+            <span class="compression-badge" id="compressionBadge" style="display: none;">
+                <i class="fas fa-compress-alt"></i> Компрессия
+            </span>
         </div>
     </div>
 
@@ -258,6 +374,9 @@
                 <button onclick="showTokenStats()">
                     <i class="fas fa-chart-pie"></i> Статистика
                 </button>
+                <button onclick="showCompressionStats()">
+                    <i class="fas fa-compress-alt"></i> Компрессия
+                </button>
                 <div class="stats">
                     <i class="fas fa-bolt"></i>
                     <span id="currentStats">Запросов: 0 | Токены: 0</span>
@@ -267,7 +386,7 @@
     </div>
 
     <footer class="footer">
-        <p>Powered by Yandex Cloud API | Анализ токенов и поведения моделей</p>
+        <p>Powered by Yandex Cloud API | Анализ токенов и компрессия истории</p>
     </footer>
 </div>
 
@@ -284,6 +403,7 @@ let currentModel = '{{ selected_model }}';
 let models = {};
 let requestCount = 0;
 let isSendingMessage = false;
+let compressionEnabled = true;
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', async function() {
@@ -292,6 +412,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     updateTemperatureDescription();
     updateSessionInfo();
     updateStatsPanel();
+    updateCompressionStats();
 
     document.getElementById('temperatureSelect').addEventListener('change', updateTemperatureDescription);
     document.getElementById('messageInput').addEventListener('keydown', function(e) {
@@ -300,6 +421,9 @@ document.addEventListener('DOMContentLoaded', async function() {
             sendMessage();
         }
     });
+
+    // Тoggle компрессии
+    document.getElementById('compressionToggle').addEventListener('change', toggleCompression);
 
     // Инициализируем активные кнопки режимов
     document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -392,6 +516,35 @@ function setMode(mode) {
     }
 }
 
+// Включение/выключение компрессии
+async function toggleCompression() {
+    const toggle = document.getElementById('compressionToggle');
+    const status = document.getElementById('compressionStatus');
+
+    try {
+        const response = await fetch('/toggle_compression', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ enable: toggle.checked })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            compressionEnabled = data.enable_compression;
+            status.textContent = compressionEnabled ? 'Компрессия включена' : 'Компрессия выключена';
+
+            // Показываем/скрываем бейдж
+            const badge = document.getElementById('compressionBadge');
+            badge.style.display = compressionEnabled ? 'inline-block' : 'none';
+
+            addMessage('system', `🔄 Компрессия истории ${compressionEnabled ? 'включена' : 'выключена'}`);
+        }
+    } catch (error) {
+        console.error('Ошибка переключения компрессии:', error);
+        toggle.checked = !toggle.checked; // Возвращаем предыдущее состояние
+    }
+}
+
 // Отправка сообщения
 async function sendMessage() {
     if (isSendingMessage) return;
@@ -430,6 +583,11 @@ async function sendMessage() {
         } else if (data.is_command) {
             addMessage('system', data.response);
         } else {
+            // Показываем событие компрессии если оно было
+            if (data.compression && data.compression.occurred) {
+                showCompressionEvent(data);
+            }
+
             // Добавляем сообщение с анализом поведения
             const showAnalysis = document.getElementById('showBehaviorAnalysis').checked;
             addMessageWithAnalysis('assistant', data.response, data, showAnalysis);
@@ -437,6 +595,7 @@ async function sendMessage() {
             // Обновляем статистику
             requestCount++;
             updateStatsPanel(data.token_stats);
+            updateCompressionStats(data.compression_stats || data.compression);
             updateCurrentStats(data);
         }
 
@@ -453,6 +612,21 @@ async function sendMessage() {
     }
 }
 
+// Показать событие компрессии
+function showCompressionEvent(data) {
+    const container = document.getElementById('chatHistory');
+    const eventDiv = document.createElement('div');
+    eventDiv.className = 'compression-event';
+
+    eventDiv.innerHTML = `
+        <i class="fas fa-compress-alt"></i>
+        <strong>Сжатие истории выполнено!</strong><br>
+        <small>Экономия токенов: ${data.compression_stats?.tokens_saved || 'расчет...'}</small>
+    `;
+
+    container.appendChild(eventDiv);
+}
+
 // Добавление сообщения с анализом поведения
 function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
     const container = document.getElementById('chatHistory');
@@ -466,6 +640,18 @@ function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
     const tokenRatio = data.input_tokens > 0 ? (data.output_tokens / data.input_tokens).toFixed(2) : 'N/A';
     const cost = data.cost || 0;
     const executionTime = data.execution_time || 0;
+
+    // Добавляем информацию о компрессии если есть
+    let compressionInfo = '';
+    if (data.compression && data.compression.occurred) {
+        compressionInfo = `
+            <div style="margin-top: 5px; padding: 5px; background: #e8f5e9; border-radius: 4px; font-size: 11px;">
+                <i class="fas fa-compress-alt"></i> Сжатие истории:
+                +${data.compression.input_tokens || 0} входных,
+                +${data.compression.output_tokens || 0} выходных токенов
+            </div>
+        `;
+    }
 
     // Анализ поведения
     let analysisHTML = '';
@@ -525,6 +711,7 @@ function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
             <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
         </div>
         <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+        ${compressionInfo}
         <div class="message-metrics">
             <small>
                 <i class="fas fa-clock"></i> ${executionTime}с |
@@ -578,6 +765,50 @@ function updateStatsPanel(stats = null) {
                         (data.token_stats.total_input || 0) + (data.token_stats.total_output || 0);
                     document.getElementById('totalCost').textContent =
                         data.token_stats.total_cost ? data.token_stats.total_cost.toFixed(5) : '0.00000';
+                }
+            });
+    }
+}
+
+// Обновление статистики компрессии
+function updateCompressionStats(stats = null) {
+    if (stats) {
+        document.getElementById('totalCompressions').textContent = stats.total_compressions || 0;
+        document.getElementById('tokensSaved').textContent = stats.tokens_saved || 0;
+        document.getElementById('compressionRatio').textContent = stats.compression_ratio || 0 + '%';
+
+        // Показываем панель компрессии если есть статистика
+        const panel = document.getElementById('compressionStats');
+        if (stats.total_compressions > 0) {
+            panel.style.display = 'block';
+        }
+    } else {
+        // Загружаем статистику с сервера
+        fetch('/get_session_info')
+            .then(response => response.json())
+            .then(data => {
+                if (data.compression_stats) {
+                    document.getElementById('totalCompressions').textContent = data.compression_stats.total_compressions || 0;
+                    document.getElementById('tokensSaved').textContent = data.compression_stats.tokens_saved || 0;
+                    document.getElementById('compressionRatio').textContent = data.compression_stats.compression_ratio || 0 + '%';
+
+                    // Показываем панель компрессии если есть статистика
+                    const panel = document.getElementById('compressionStats');
+                    if (data.compression_stats.total_compressions > 0) {
+                        panel.style.display = 'block';
+                    }
+
+                    // Обновляем состояние переключателя
+                    if (data.compression_enabled !== undefined) {
+                        compressionEnabled = data.compression_enabled;
+                        document.getElementById('compressionToggle').checked = compressionEnabled;
+                        document.getElementById('compressionStatus').textContent =
+                            compressionEnabled ? 'Компрессия включена' : 'Компрессия выключена';
+
+                        // Показываем/скрываем бейдж
+                        const badge = document.getElementById('compressionBadge');
+                        badge.style.display = compressionEnabled ? 'inline-block' : 'none';
+                    }
                 }
             });
     }
@@ -640,9 +871,32 @@ async function showTokenStats() {
         if (data.response) {
             addMessage('system', data.response);
             updateStatsPanel();
+            updateCompressionStats();
         }
     } catch (error) {
         console.error('Ошибка получения статистики:', error);
+    }
+}
+
+// Показать статистику компрессии
+async function showCompressionStats() {
+    try {
+        const response = await fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: '/compression_stats',
+                model: currentModel,
+                temperature: parseFloat(document.getElementById('temperatureSelect').value)
+            })
+        });
+
+        const data = await response.json();
+        if (data.response) {
+            addMessage('system', data.response);
+        }
+    } catch (error) {
+        console.error('Ошибка получения статистики компрессии:', error);
     }
 }
 
@@ -686,7 +940,7 @@ async function checkApiStatus() {
 
 // Очистка истории
 async function clearHistory() {
-    if (!confirm('Очистить историю диалога и статистику?')) return;
+    if (!confirm('Очистить историю диалога, компрессию и статистику?')) return;
 
     try {
         const response = await fetch('/clear_history', {method: 'POST'});
@@ -695,10 +949,18 @@ async function clearHistory() {
             requestCount = 0;
             updateCurrentStats({token_stats: {total_input: 0, total_output: 0}});
             updateStatsPanel({total_input: 0, total_output: 0, total_cost: 0});
+            updateCompressionStats({
+                total_compressions: 0,
+                tokens_saved: 0,
+                compression_ratio: 0
+            });
             updateSessionInfo();
 
             // Добавляем сообщение об очистке
-            addMessage('system', '🗑️ История диалога и статистика очищены.');
+            addMessage('system', '🗑️ История диалога, компрессия и статистика очищены.');
+
+            // Скрываем панель компрессии
+            document.getElementById('compressionStats').style.display = 'none';
         }
     } catch (error) {
         console.error('Ошибка очистки истории:', error);
@@ -720,11 +982,13 @@ async function exportHistory() {
     const exportData = {
         messages: messages,
         stats: statsData.token_stats || {},
+        compression_stats: statsData.compression_stats || {},
         metadata: {
             export_date: new Date().toISOString(),
             model: currentModel,
             mode: currentMode,
-            total_requests: requestCount
+            total_requests: requestCount,
+            compression_enabled: compressionEnabled
         }
     };
 
@@ -732,7 +996,7 @@ async function exportHistory() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chat_analysis_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `chat_with_compression_${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
