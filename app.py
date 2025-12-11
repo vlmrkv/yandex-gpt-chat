@@ -70,11 +70,36 @@ MODELS_CONFIG = {
     # }
 }
 
+# Конфигурация компрессии
+COMPRESSION_CONFIG = {
+    'enable_compression': True,  # Включить компрессию
+    'compression_interval': 10,  # Сжимать каждые 10 сообщений
+    'summary_model': 'yandexgpt-lite',  # Модель для создания summary
+    'max_summary_tokens': 300,  # Максимальная длина summary
+    'keep_last_messages': 3,  # Оставлять последние N сообщений несжатыми
+    'min_compression_saving': 0.3,  # Минимальная экономия токенов для компрессии (30%)
+}
+
 # Базовые системные промпты для разных режимов
 SYSTEM_PROMPTS = {
     'default': 'Ты полезный ассистент. Отвечай вежливо и по существу.',
     'json_format': """Ты полезный ассистент. Всегда отвечай в формате JSON.""",
-    'tz_collection': """Ты - профессиональный аналитик, который собирает требования для Технического Задания."""
+    'tz_collection': """Ты - профессиональный аналитик, который собирает требования для Технического Задания.""",
+
+    # Промпт для компрессии истории
+    'history_compression': """Ты - эксперт по сжатию информации. Твоя задача - создать краткое изложение диалога, сохранив ключевые моменты, решения, важные детали и контекст.
+
+ПРАВИЛА СОЗДАНИЯ SUMMARY:
+1. Сохрани основную тему/цель диалога
+2. Сохрани ключевые решения и договоренности
+3. Сохрани важные факты, цифры, даты
+4. Сохрани контекст (кто, что, зачем, когда)
+5. Игнорируй приветствия, прощания, технические детали
+6. Будь максимально кратким, но информативным
+7. Пиши в формате: "Обсуждение [тема]. Решено: ... Важно: ..."
+
+ФОРМАТ ОТВЕТА:
+Только summary без дополнительных комментариев."""
 }
 
 
@@ -82,6 +107,8 @@ def init_session():
     """Инициализация сессии с настройками по умолчанию"""
     if 'chat_history' not in session:
         session['chat_history'] = []
+    if 'compressed_history' not in session:
+        session['compressed_history'] = []
     if 'chat_mode' not in session:
         session['chat_mode'] = 'default'
     if 'tz_data' not in session:
@@ -107,6 +134,17 @@ def init_session():
         session['total_output_tokens'] = 0
     if 'total_cost' not in session:
         session['total_cost'] = 0.0
+    # Статистика компрессии
+    if 'compression_stats' not in session:
+        session['compression_stats'] = {
+            'total_compressions': 0,
+            'tokens_saved': 0,
+            'original_tokens': 0,
+            'compressed_tokens': 0,
+            'compression_ratio': 0.0
+        }
+    if 'last_compression_message_id' not in session:
+        session['last_compression_message_id'] = -1
 
 
 def get_model_config(model_key):
@@ -118,9 +156,7 @@ def estimate_tokens(text):
     """Примерная оценка количества токенов в тексте"""
     if not text:
         return 0
-
-    # Более простая и надежная оценка
-    # Примерно 1 токен на 4 символа для смешанного текста
+    # Более точная оценка: 1 токен ≈ 4 символа
     return max(1, int(len(text) / 4))
 
 
@@ -169,7 +205,7 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
             else:
                 behavior_analysis['efficiency_score'] = 40
 
-    # Уровень многословности (используем int для сравнения)
+    # Уровень многословности
     if output_tokens < 30:
         behavior_analysis['verbosity_level'] = 'очень краткий'
     elif output_tokens < 100:
@@ -181,7 +217,7 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
     else:
         behavior_analysis['verbosity_level'] = 'очень подробный'
 
-    # Влияние температуры (используем float для сравнения)
+    # Влияние температуры
     if temperature < 0.2:
         behavior_analysis['temperature_effect'] = 'очень детерминированный'
     elif temperature < 0.4:
@@ -236,8 +272,8 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
         'modelUri': f'gpt://{YANDEX_FOLDER_ID}/{model_config["model_uri"]}',
         'completionOptions': {
             'stream': False,
-            'temperature': float(temperature),  # Убедимся, что это float
-            'maxTokens': int(max_tokens)  # Убедимся, что это int
+            'temperature': float(temperature),
+            'maxTokens': int(max_tokens)
         },
         'messages': messages
     }
@@ -302,6 +338,142 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
     return result, execution_time, input_tokens, output_tokens, total_cost
 
 
+def compress_history(messages_to_compress, model_key='yandexgpt-lite'):
+    """Создание summary для сжатия истории диалога"""
+    if not messages_to_compress or len(messages_to_compress) < 2:
+        return "", 0, 0, 0.0
+
+    # Подготавливаем сообщения для компрессии
+    compression_messages = [
+        {'role': 'system', 'text': SYSTEM_PROMPTS['history_compression']},
+        {'role': 'user',
+         'text': f"Создай краткое изложение этого диалога:\n\n{format_messages_for_compression(messages_to_compress)}"}
+    ]
+
+    # Получаем конфигурацию модели
+    model_config = get_model_config(model_key)
+
+    # Вызываем API для создания summary
+    result, execution_time, input_tokens, output_tokens, cost = call_yandex_api(
+        model_config=model_config,
+        messages=compression_messages,
+        temperature=0.3,  # Низкая температура для более точного summary
+        max_tokens=COMPRESSION_CONFIG['max_summary_tokens']
+    )
+
+    if result is None:
+        return "", 0, 0, 0.0
+
+    # Извлекаем summary
+    summary = ""
+    try:
+        if 'result' in result and 'alternatives' in result['result']:
+            summary = result['result']['alternatives'][0]['message']['text']
+        elif 'alternatives' in result:
+            summary = result['alternatives'][0]['message']['text']
+    except (KeyError, IndexError) as e:
+        logger.error(f"Ошибка при извлечении summary: {e}")
+        summary = "Не удалось создать summary"
+
+    return summary.strip(), input_tokens, output_tokens, cost
+
+
+def format_messages_for_compression(messages):
+    """Форматирование сообщений для компрессии"""
+    formatted = []
+    for msg in messages:
+        role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
+        formatted.append(f"{role}: {msg['text']}")
+    return "\n".join(formatted)
+
+
+def should_compress_history(full_history):
+    """Определить, нужно ли сжимать историю"""
+    if not COMPRESSION_CONFIG['enable_compression']:
+        return False
+
+    # Проверяем по количеству сообщений
+    if len(full_history) >= COMPRESSION_CONFIG['compression_interval']:
+        return True
+
+    # Проверяем по количеству токенов (опционально)
+    total_tokens = sum(estimate_tokens(msg['text']) for msg in full_history)
+    if total_tokens > 2000:  # Если больше 2000 токенов
+        return True
+
+    return False
+
+
+def get_compression_candidate(full_history, last_compressed_id):
+    """Получить сообщения для компрессии"""
+    keep_last = COMPRESSION_CONFIG['keep_last_messages']
+
+    # Ищем сообщения, которые еще не были сжаты
+    uncompressed_messages = []
+    for i, msg in enumerate(full_history):
+        if i <= last_compressed_id:
+            continue
+        # Исключаем последние сообщения
+        if i >= len(full_history) - keep_last:
+            break
+        uncompressed_messages.append(msg)
+
+    return uncompressed_messages
+
+
+def update_compression_stats(original_tokens, compressed_tokens):
+    """Обновить статистику компрессии"""
+    if 'compression_stats' not in session:
+        session['compression_stats'] = {
+            'total_compressions': 0,
+            'tokens_saved': 0,
+            'original_tokens': 0,
+            'compressed_tokens': 0,
+            'compression_ratio': 0.0
+        }
+
+    stats = session['compression_stats']
+    stats['total_compressions'] += 1
+    stats['original_tokens'] += original_tokens
+    stats['compressed_tokens'] += compressed_tokens
+
+    if original_tokens > 0:
+        tokens_saved = original_tokens - compressed_tokens
+        stats['tokens_saved'] += tokens_saved
+        compression_ratio = compressed_tokens / original_tokens
+        stats['compression_ratio'] = round(compression_ratio * 100, 2)
+
+    session['compression_stats'] = stats
+
+
+def get_effective_history():
+    """Получить эффективную историю (сжатая + последние сообщения)"""
+    full_history = session.get('chat_history', [])
+    compressed_history = session.get('compressed_history', [])
+    keep_last = COMPRESSION_CONFIG['keep_last_messages']
+
+    # Если нет сжатой истории, возвращаем полную историю
+    if not compressed_history:
+        return full_history[-keep_last * 2:] if len(full_history) > keep_last * 2 else full_history
+
+    # Объединяем сжатую историю с последними сообщениями
+    last_messages = full_history[-keep_last:] if len(full_history) > keep_last else full_history
+
+    effective_history = []
+
+    # Добавляем сжатую историю
+    for summary in compressed_history:
+        effective_history.append({
+            'role': 'system',
+            'text': f"📚 Краткое содержание предыдущего диалога: {summary}"
+        })
+
+    # Добавляем последние сообщения
+    effective_history.extend(last_messages)
+
+    return effective_history
+
+
 @app.route('/')
 def index():
     """Главная страница с чатом"""
@@ -316,7 +488,8 @@ def index():
                            selected_model=session.get('selected_model', 'yandexgpt-lite'),
                            total_input_tokens=session.get('total_input_tokens', 0),
                            total_output_tokens=session.get('total_output_tokens', 0),
-                           total_cost=session.get('total_cost', 0))
+                           total_cost=session.get('total_cost', 0),
+                           compression_stats=session.get('compression_stats', {}))
 
 
 @app.route('/send_message', methods=['POST'])
@@ -361,6 +534,8 @@ def send_message():
             return show_help()
         elif user_message.lower() == '/stats':
             return show_stats()
+        elif user_message.lower() == '/compression_stats':
+            return show_compression_stats()
 
         # Получаем текущий режим чата
         chat_mode = session.get('chat_mode', 'default')
@@ -384,11 +559,58 @@ def send_message():
         else:
             actual_mode = chat_mode
 
-        # Получаем историю диалога из сессии
-        chat_history = session.get('chat_history', [])
+        # Получаем полную историю диалога из сессии
+        full_history = session.get('chat_history', [])
 
-        # Добавляем сообщение пользователя в историю
-        chat_history.append({'role': 'user', 'text': user_message})
+        # Добавляем сообщение пользователя в полную историю
+        full_history.append({'role': 'user', 'text': user_message})
+
+        # Проверяем, нужно ли сжимать историю
+        compression_occurred = False
+        compression_cost = 0.0
+        compression_input_tokens = 0
+        compression_output_tokens = 0
+
+        if COMPRESSION_CONFIG['enable_compression'] and should_compress_history(full_history):
+            # Получаем сообщения для компрессии
+            candidate_messages = get_compression_candidate(
+                full_history,
+                session.get('last_compression_message_id', -1)
+            )
+
+            if candidate_messages and len(candidate_messages) >= 2:
+                # Создаем summary
+                summary, comp_input, comp_output, comp_cost = compress_history(
+                    candidate_messages,
+                    COMPRESSION_CONFIG['summary_model']
+                )
+
+                if summary:
+                    # Добавляем summary в сжатую историю
+                    compressed_history = session.get('compressed_history', [])
+                    compressed_history.append(summary)
+                    session['compressed_history'] = compressed_history
+
+                    # Обновляем ID последнего сжатого сообщения
+                    last_msg_index = full_history.index(candidate_messages[-1])
+                    session['last_compression_message_id'] = last_msg_index
+
+                    # Обновляем статистику компрессии
+                    original_tokens = sum(estimate_tokens(msg['text']) for msg in candidate_messages)
+                    compressed_tokens = estimate_tokens(summary)
+                    update_compression_stats(original_tokens, compressed_tokens)
+
+                    compression_occurred = True
+                    compression_cost = comp_cost
+                    compression_input_tokens = comp_input
+                    compression_output_tokens = comp_output
+
+                    logger.info(
+                        f"✅ Сжатие истории: {len(candidate_messages)} сообщений -> summary ({compressed_tokens} токенов)")
+                    logger.info(f"   Экономия: {original_tokens - compressed_tokens} токенов")
+
+        # Получаем эффективную историю (сжатая + последние сообщения)
+        effective_history = get_effective_history()
 
         # Выбираем системный промпт в зависимости от режима
         if session.get('custom_system_prompt'):
@@ -402,10 +624,10 @@ def send_message():
         # Подготавливаем сообщения для API
         messages = [{'role': 'system', 'text': system_prompt}]
 
-        # Добавляем историю диалога
+        # Добавляем эффективную историю диалога
         max_messages = 20 if actual_mode == 'tz_collection' else 15
         filtered_history = []
-        for msg in chat_history:
+        for msg in effective_history:
             if msg['role'] in ['user', 'assistant']:
                 filtered_history.append(msg)
 
@@ -457,52 +679,42 @@ def send_message():
             input_tokens = estimate_tokens(' '.join([msg['text'] for msg in messages]))
             output_tokens = estimate_tokens(assistant_message)
 
+        # Добавляем токены компрессии к общим токенам
+        total_input = input_tokens + compression_input_tokens
+        total_output = output_tokens + compression_output_tokens
+        total_cost_api = cost + compression_cost
+
         # Анализируем поведение модели на основе токенов и температуры
         behavior_analysis = analyze_response_behavior(
             input_tokens, output_tokens, temperature_val, assistant_message, model_config
         )
 
         # Обновляем общую статистику токенов
-        session['total_input_tokens'] = session.get('total_input_tokens', 0) + input_tokens
-        session['total_output_tokens'] = session.get('total_output_tokens', 0) + output_tokens
-        session['total_cost'] = session.get('total_cost', 0.0) + cost
+        session['total_input_tokens'] = session.get('total_input_tokens', 0) + total_input
+        session['total_output_tokens'] = session.get('total_output_tokens', 0) + total_output
+        session['total_cost'] = session.get('total_cost', 0.0) + total_cost_api
 
-        # Обработка в зависимости от режима
-        parsed_response = None
-        final_assistant_message = assistant_message
+        # Добавляем ответ ассистента в полную историю
+        full_history.append({'role': 'assistant', 'text': assistant_message})
 
-        if actual_mode == 'json_format':
-            # Пытаемся распарсить JSON ответ
-            try:
-                json_match = re.search(r'\{.*\}', assistant_message, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    parsed_response = json.loads(json_str)
-                    final_assistant_message = json.dumps(parsed_response, ensure_ascii=False, indent=2)
-            except json.JSONDecodeError:
-                pass  # Оставляем оригинальный текст
-
-        # Добавляем ответ ассистента в историю
-        chat_history.append({'role': 'assistant', 'text': final_assistant_message})
-
-        # Ограничиваем историю (максимум 50 сообщений)
-        if len(chat_history) > 50:
-            chat_history = chat_history[-50:]
+        # Ограничиваем полную историю (максимум 100 сообщений)
+        if len(full_history) > 100:
+            full_history = full_history[-100:]
 
         # Сохраняем обновленную историю в сессии
-        session['chat_history'] = chat_history
+        session['chat_history'] = full_history
         session.modified = True
 
         # Формируем ответ для клиента
         response_data = {
-            'response': final_assistant_message,
-            'history': chat_history,
+            'response': assistant_message,
+            'history': full_history,
             'chat_mode': chat_mode,
             'temperature': temperature_val,
             'require_json': require_json,
             'tz_complete': session.get('tz_complete', False),
             'current_role': session.get('current_role_name', 'Обычный ассистент'),
-            'history_count': len(chat_history),
+            'history_count': len(full_history),
             'model': model_key,
             'model_name': model_config['name'],
             'execution_time': round(execution_time, 2),
@@ -515,16 +727,22 @@ def send_message():
                 'total_input': session['total_input_tokens'],
                 'total_output': session['total_output_tokens'],
                 'total_cost': session['total_cost']
+            },
+            'compression': {
+                'occurred': compression_occurred,
+                'cost': round(compression_cost, 5),
+                'input_tokens': compression_input_tokens,
+                'output_tokens': compression_output_tokens
             }
         }
 
-        if parsed_response:
-            response_data['parsed'] = parsed_response
-        if session.get('tz_data'):
-            response_data['tz_data'] = session['tz_data']
+        if compression_occurred:
+            response_data['compression_stats'] = session.get('compression_stats', {})
 
         logger.info(f"Модель: {model_key}, Вход: {input_tokens}, Выход: {output_tokens}, "
                     f"Время: {execution_time:.2f}с, Стоимость: {cost:.5f} руб")
+        if compression_occurred:
+            logger.info(f"Сжатие: +{compression_input_tokens} входных, +{compression_output_tokens} выходных токенов")
 
         return jsonify(response_data)
 
@@ -697,6 +915,7 @@ def show_stats():
     total_input = session.get('total_input_tokens', 0)
     total_output = session.get('total_output_tokens', 0)
     total_cost = session.get('total_cost', 0.0)
+    compression_stats = session.get('compression_stats', {})
 
     stats_text = f"""
 📊 **Статистика использования токенов:**
@@ -705,6 +924,43 @@ def show_stats():
 • Всего выходных токенов: {total_output}
 • Всего токенов: {total_input + total_output}
 • Общая стоимость: {total_cost:.5f} руб
+
+📦 **Статистика компрессии:**
+• Сжатий выполнено: {compression_stats.get('total_compressions', 0)}
+• Токенов сэкономлено: {compression_stats.get('tokens_saved', 0)}
+• Коэффициент сжатия: {compression_stats.get('compression_ratio', 0)}%
+"""
+
+    return jsonify({
+        'response': stats_text,
+        'is_command': True,
+        'current_role': session.get('current_role_name', 'Обычный ассистент'),
+        'history_count': len(session.get('chat_history', []))
+    })
+
+
+def show_compression_stats():
+    """Показать детальную статистику компрессии"""
+    compression_stats = session.get('compression_stats', {})
+    config = COMPRESSION_CONFIG
+
+    stats_text = f"""
+🔧 **Конфигурация компрессии:**
+• Включена: {'✅ Да' if config['enable_compression'] else '❌ Нет'}
+• Интервал сжатия: каждые {config['compression_interval']} сообщений
+• Модель для summary: {config['summary_model']}
+• Оставлять сообщений: {config['keep_last_messages']}
+• Макс. токенов summary: {config['max_summary_tokens']}
+
+📈 **Статистика компрессии:**
+• Всего сжатий: {compression_stats.get('total_compressions', 0)}
+• Исходных токенов: {compression_stats.get('original_tokens', 0)}
+• Сжатых токенов: {compression_stats.get('compressed_tokens', 0)}
+• Токенов сэкономлено: {compression_stats.get('tokens_saved', 0)}
+• Коэффициент сжатия: {compression_stats.get('compression_ratio', 0)}%
+
+💡 **Эффективность:**
+{'- Компрессия работает эффективно' if compression_stats.get('compression_ratio', 100) < 50 else '- Компрессия может быть улучшена'}
 """
 
     return jsonify({
@@ -724,6 +980,7 @@ def show_help():
 /system [промпт] - установить произвольный промпт
 /reset - сбросить роль
 /stats - показать статистику токенов
+/compression_stats - показать статистику компрессии
 /help - показать справку
 """
     return jsonify({
@@ -755,6 +1012,9 @@ def set_mode():
                 'role': 'assistant',
                 'text': 'Здравствуйте! Я помогу вам составить Техническое Задание. Расскажите о вашем проекте.'
             }]
+            # Сбрасываем сжатую историю при смене режима
+            session['compressed_history'] = []
+            session['last_compression_message_id'] = -1
         else:
             session['custom_system_prompt'] = None
             session['current_role_name'] = 'Обычный ассистент'
@@ -779,15 +1039,25 @@ def clear_history():
     """Очистка истории диалога"""
     init_session()
     session['chat_history'] = []
+    session['compressed_history'] = []
     session['tz_data'] = None
     session['tz_complete'] = False
     # Сбрасываем статистику
     session['total_input_tokens'] = 0
     session['total_output_tokens'] = 0
     session['total_cost'] = 0.0
+    # Сбрасываем статистику компрессии
+    session['compression_stats'] = {
+        'total_compressions': 0,
+        'tokens_saved': 0,
+        'original_tokens': 0,
+        'compressed_tokens': 0,
+        'compression_ratio': 0.0
+    }
+    session['last_compression_message_id'] = -1
     session.modified = True
 
-    system_message = "🗑️ История диалога и статистика очищены."
+    system_message = "🗑️ История диалога, компрессия и статистика очищены."
 
     return jsonify({
         'success': True,
@@ -803,6 +1073,28 @@ def clear_history():
     })
 
 
+@app.route('/toggle_compression', methods=['POST'])
+def toggle_compression():
+    """Включение/выключение компрессии"""
+    init_session()
+
+    # Получаем состояние из запроса или переключаем
+    enable = request.json.get('enable')
+    if enable is None:
+        # Переключаем текущее состояние
+        COMPRESSION_CONFIG['enable_compression'] = not COMPRESSION_CONFIG['enable_compression']
+    else:
+        COMPRESSION_CONFIG['enable_compression'] = bool(enable)
+
+    status = "включена" if COMPRESSION_CONFIG['enable_compression'] else "выключена"
+
+    return jsonify({
+        'success': True,
+        'enable_compression': COMPRESSION_CONFIG['enable_compression'],
+        'message': f'Компрессия истории {status}'
+    })
+
+
 @app.route('/api_info')
 def api_info():
     """Информация о статусе API"""
@@ -810,7 +1102,8 @@ def api_info():
     return jsonify({
         'status': status,
         'has_api_key': bool(YANDEX_API_KEY),
-        'has_folder_id': bool(YANDEX_FOLDER_ID)
+        'has_folder_id': bool(YANDEX_FOLDER_ID),
+        'compression_enabled': COMPRESSION_CONFIG['enable_compression']
     })
 
 
@@ -826,6 +1119,7 @@ def get_session_info():
         'tz_complete': session.get('tz_complete', False),
         'tz_data': session.get('tz_data'),
         'history_length': len(chat_history),
+        'compressed_history_length': len(session.get('compressed_history', [])),
         'session_id': session.get('session_id'),
         'current_role': session.get('current_role_name', 'Обычный ассистент'),
         'has_custom_prompt': bool(session.get('custom_system_prompt')),
@@ -834,7 +1128,9 @@ def get_session_info():
             'total_input': session.get('total_input_tokens', 0),
             'total_output': session.get('total_output_tokens', 0),
             'total_cost': session.get('total_cost', 0.0)
-        }
+        },
+        'compression_stats': session.get('compression_stats', {}),
+        'compression_enabled': COMPRESSION_CONFIG['enable_compression']
     })
 
 
