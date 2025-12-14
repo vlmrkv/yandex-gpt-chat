@@ -4,11 +4,13 @@ import os
 import re
 import uuid
 import time
-from datetime import timedelta
+import sqlite3
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, session, send_from_directory
+from flask import Flask, render_template, request, jsonify, session, send_from_directory, Response
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -50,44 +52,24 @@ MODELS_CONFIG = {
         'max_context_tokens': 16000,
         'description': 'Продвинутая модель Yandex с улучшенным качеством'
     },
-    # 'qwen': {
-    #     'name': 'Qwen 2.5 32B',
-    #     'model_uri': 'qwen/qwen-2.5-32b-instruct',
-    #     'cost_per_1k_input_tokens': 0.0004,
-    #     'cost_per_1k_output_tokens': 0.0008,
-    #     'max_tokens': 32000,
-    #     'max_context_tokens': 32000,
-    #     'description': 'Мощная модель от Alibaba с большим контекстом'
-    # },
-    # 'gemma': {
-    #     'name': 'Gemma 2 9B',
-    #     'model_uri': 'gemma/gemma-2-9b-it',
-    #     'cost_per_1k_input_tokens': 0.00025,
-    #     'cost_per_1k_output_tokens': 0.0005,
-    #     'max_tokens': 16000,
-    #     'max_context_tokens': 16000,
-    #     'description': 'Эффективная модель от Google, оптимизированная для диалогов'
-    # }
 }
 
 # Конфигурация компрессии
 COMPRESSION_CONFIG = {
-    'enable_compression': True,  # Включить компрессию
-    'compression_interval': 10,  # Сжимать каждые 10 сообщений
-    'summary_model': 'yandexgpt-lite',  # Модель для создания summary
-    'max_summary_tokens': 300,  # Максимальная длина summary
-    'keep_last_messages': 3,  # Оставлять последние N сообщений несжатыми
-    'min_compression_saving': 0.3,  # Минимальная экономия токенов для компрессии (30%)
+    'enable_compression': True,
+    'compression_interval': 10,
+    'summary_model': 'yandexgpt-lite',
+    'max_summary_tokens': 300,
+    'keep_last_messages': 3,
+    'min_compression_saving': 0.3,
 }
 
-# Базовые системные промпты для разных режимов
+# Базовые системные промпты
 SYSTEM_PROMPTS = {
     'default': 'Ты полезный ассистент. Отвечай вежливо и по существу.',
-    'json_format': """Ты полезный ассистент. Всегда отвечай в формате JSON.""",
-    'tz_collection': """Ты - профессиональный аналитик, который собирает требования для Технического Задания.""",
-
-    # Промпт для компрессии истории
-    'history_compression': """Ты - эксперт по сжатию информации. Твоя задача - создать краткое изложение диалога, сохранив ключевые моменты, решения, важные детали и контекст.
+    'json_format': 'Ты полезный ассистент. Всегда отвечай в формате JSON.',
+    'tz_collection': 'Ты - профессиональный аналитик, который собирает требования для Технического Задания.',
+    'history_compression': """Ты - эксперт по сжатию информации. Твоя задача - создать краткое изложение диалога.
 
 ПРАВИЛА СОЗДАНИЯ SUMMARY:
 1. Сохрани основную тему/цель диалога
@@ -103,8 +85,772 @@ SYSTEM_PROMPTS = {
 }
 
 
+# Класс для работы с внешней памятью (SQLite)
+class MemoryStorage:
+    """Класс для хранения промежуточных результатов в SQLite"""
+
+    def __init__(self, db_path: str = "chat_memory.db"):
+        self.db_path = db_path
+        self.init_database()
+
+    def init_database(self):
+        """Инициализация базы данных и создание таблиц"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # Таблица для хранения сессий
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS sessions
+                               (
+                                   session_id
+                                   TEXT
+                                   PRIMARY
+                                   KEY,
+                                   created_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   updated_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   chat_mode
+                                   TEXT
+                                   DEFAULT
+                                   'default',
+                                   temperature
+                                   REAL
+                                   DEFAULT
+                                   0.7,
+                                   selected_model
+                                   TEXT
+                                   DEFAULT
+                                   'yandexgpt-lite',
+                                   custom_system_prompt
+                                   TEXT,
+                                   current_role_name
+                                   TEXT
+                                   DEFAULT
+                                   'Обычный ассистент',
+                                   metadata
+                                   TEXT
+                               )
+                               ''')
+
+                # Таблица для хранения сообщений
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS messages
+                               (
+                                   id
+                                   INTEGER
+                                   PRIMARY
+                                   KEY
+                                   AUTOINCREMENT,
+                                   session_id
+                                   TEXT,
+                                   message_index
+                                   INTEGER,
+                                   role
+                                   TEXT,
+                                   content
+                                   TEXT,
+                                   tokens
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   cost
+                                   REAL
+                                   DEFAULT
+                                   0.0,
+                                   model
+                                   TEXT,
+                                   temperature
+                                   REAL,
+                                   created_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   FOREIGN
+                                   KEY
+                               (
+                                   session_id
+                               ) REFERENCES sessions
+                               (
+                                   session_id
+                               ) ON DELETE CASCADE,
+                                   UNIQUE
+                               (
+                                   session_id,
+                                   message_index
+                               )
+                                   )
+                               ''')
+
+                # Таблица для сжатой истории
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS compressed_history
+                               (
+                                   id
+                                   INTEGER
+                                   PRIMARY
+                                   KEY
+                                   AUTOINCREMENT,
+                                   session_id
+                                   TEXT,
+                                   summary
+                                   TEXT,
+                                   original_messages_count
+                                   INTEGER,
+                                   original_tokens
+                                   INTEGER,
+                                   compressed_tokens
+                                   INTEGER,
+                                   created_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   FOREIGN
+                                   KEY
+                               (
+                                   session_id
+                               ) REFERENCES sessions
+                               (
+                                   session_id
+                               ) ON DELETE CASCADE
+                                   )
+                               ''')
+
+                # Таблица для статистики токенов
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS token_stats
+                               (
+                                   session_id
+                                   TEXT
+                                   PRIMARY
+                                   KEY,
+                                   total_input_tokens
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   total_output_tokens
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   total_cost
+                                   REAL
+                                   DEFAULT
+                                   0.0,
+                                   updated_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   FOREIGN
+                                   KEY
+                               (
+                                   session_id
+                               ) REFERENCES sessions
+                               (
+                                   session_id
+                               ) ON DELETE CASCADE
+                                   )
+                               ''')
+
+                # Таблица для статистики компрессии
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS compression_stats
+                               (
+                                   session_id
+                                   TEXT
+                                   PRIMARY
+                                   KEY,
+                                   total_compressions
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   tokens_saved
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   original_tokens
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   compressed_tokens
+                                   INTEGER
+                                   DEFAULT
+                                   0,
+                                   compression_ratio
+                                   REAL
+                                   DEFAULT
+                                   0.0,
+                                   updated_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   FOREIGN
+                                   KEY
+                               (
+                                   session_id
+                               ) REFERENCES sessions
+                               (
+                                   session_id
+                               ) ON DELETE CASCADE
+                                   )
+                               ''')
+
+                # Таблица для промежуточных результатов
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS intermediate_results
+                               (
+                                   id
+                                   INTEGER
+                                   PRIMARY
+                                   KEY
+                                   AUTOINCREMENT,
+                                   session_id
+                                   TEXT,
+                                   result_type
+                                   TEXT,
+                                   data
+                                   TEXT,
+                                   created_at
+                                   TIMESTAMP
+                                   DEFAULT
+                                   CURRENT_TIMESTAMP,
+                                   metadata
+                                   TEXT,
+                                   FOREIGN
+                                   KEY
+                               (
+                                   session_id
+                               ) REFERENCES sessions
+                               (
+                                   session_id
+                               ) ON DELETE CASCADE
+                                   )
+                               ''')
+
+                # Индексы для быстрого поиска
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)')
+                cursor.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_messages_session_index ON messages(session_id, message_index)')
+                cursor.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_intermediate_session ON intermediate_results(session_id)')
+
+                conn.commit()
+                logger.info(f"База данных инициализирована: {self.db_path}")
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка инициализации базы данных: {e}")
+            raise
+
+    def save_session(self, session_id: str, session_data: Dict[str, Any]):
+        """Сохранить или обновить данные сессии"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT session_id FROM sessions WHERE session_id = ?", (session_id,))
+                exists = cursor.fetchone()
+
+                metadata = json.dumps({
+                    'tz_data': session_data.get('tz_data'),
+                    'tz_complete': session_data.get('tz_complete', False),
+                    'last_system_prompt': session_data.get('last_system_prompt'),
+                    'compression_enabled': session_data.get('compression_enabled', True)
+                })
+
+                if exists:
+                    cursor.execute('''
+                                   UPDATE sessions
+                                   SET updated_at           = CURRENT_TIMESTAMP,
+                                       chat_mode            = ?,
+                                       temperature          = ?,
+                                       selected_model       = ?,
+                                       custom_system_prompt = ?,
+                                       current_role_name    = ?,
+                                       metadata             = ?
+                                   WHERE session_id = ?
+                                   ''', (
+                                       session_data.get('chat_mode', 'default'),
+                                       float(session_data.get('temperature', 0.7)),
+                                       session_data.get('selected_model', 'yandexgpt-lite'),
+                                       session_data.get('custom_system_prompt'),
+                                       session_data.get('current_role_name', 'Обычный ассистент'),
+                                       metadata,
+                                       session_id
+                                   ))
+                else:
+                    cursor.execute('''
+                                   INSERT INTO sessions (session_id, chat_mode, temperature, selected_model,
+                                                         custom_system_prompt, current_role_name, metadata)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   ''', (
+                                       session_id,
+                                       session_data.get('chat_mode', 'default'),
+                                       float(session_data.get('temperature', 0.7)),
+                                       session_data.get('selected_model', 'yandexgpt-lite'),
+                                       session_data.get('custom_system_prompt'),
+                                       session_data.get('current_role_name', 'Обычный ассистент'),
+                                       metadata
+                                   ))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка сохранения сессии: {e}")
+
+    def save_message(self, session_id: str, message_index: int, role: str, content: str,
+                     tokens: int = 0, cost: float = 0.0, model: str = None, temperature: float = None):
+        """Сохранить сообщение в базу данных"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    INSERT OR REPLACE INTO messages 
+                    (session_id, message_index, role, content, tokens, cost, model, temperature)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    session_id, message_index, role, content,
+                    tokens, cost, model, temperature
+                ))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка сохранения сообщения: {e}")
+
+    def save_compressed_history(self, session_id: str, summary: str,
+                                original_messages_count: int, original_tokens: int,
+                                compressed_tokens: int):
+        """Сохранить сжатую историю"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                               INSERT INTO compressed_history
+                               (session_id, summary, original_messages_count, original_tokens, compressed_tokens)
+                               VALUES (?, ?, ?, ?, ?)
+                               ''', (
+                                   session_id, summary, original_messages_count,
+                                   original_tokens, compressed_tokens
+                               ))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка сохранения сжатой истории: {e}")
+
+    def update_token_stats(self, session_id: str, input_tokens: int = 0,
+                           output_tokens: int = 0, cost: float = 0.0):
+        """Обновить статистику токенов"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT session_id FROM token_stats WHERE session_id = ?", (session_id,))
+                exists = cursor.fetchone()
+
+                if exists:
+                    cursor.execute('''
+                                   UPDATE token_stats
+                                   SET total_input_tokens  = total_input_tokens + ?,
+                                       total_output_tokens = total_output_tokens + ?,
+                                       total_cost          = total_cost + ?,
+                                       updated_at          = CURRENT_TIMESTAMP
+                                   WHERE session_id = ?
+                                   ''', (input_tokens, output_tokens, cost, session_id))
+                else:
+                    cursor.execute('''
+                                   INSERT INTO token_stats
+                                       (session_id, total_input_tokens, total_output_tokens, total_cost)
+                                   VALUES (?, ?, ?, ?)
+                                   ''', (session_id, input_tokens, output_tokens, cost))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка обновления статистики токенов: {e}")
+
+    def update_compression_stats(self, session_id: str, stats: Dict[str, Any]):
+        """Обновить статистику компрессии"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT session_id FROM compression_stats WHERE session_id = ?", (session_id,))
+                exists = cursor.fetchone()
+
+                if exists:
+                    cursor.execute('''
+                                   UPDATE compression_stats
+                                   SET total_compressions = ?,
+                                       tokens_saved       = ?,
+                                       original_tokens    = ?,
+                                       compressed_tokens  = ?,
+                                       compression_ratio  = ?,
+                                       updated_at         = CURRENT_TIMESTAMP
+                                   WHERE session_id = ?
+                                   ''', (
+                                       stats.get('total_compressions', 0),
+                                       stats.get('tokens_saved', 0),
+                                       stats.get('original_tokens', 0),
+                                       stats.get('compressed_tokens', 0),
+                                       stats.get('compression_ratio', 0.0),
+                                       session_id
+                                   ))
+                else:
+                    cursor.execute('''
+                                   INSERT INTO compression_stats
+                                   (session_id, total_compressions, tokens_saved,
+                                    original_tokens, compressed_tokens, compression_ratio)
+                                   VALUES (?, ?, ?, ?, ?, ?)
+                                   ''', (
+                                       session_id,
+                                       stats.get('total_compressions', 0),
+                                       stats.get('tokens_saved', 0),
+                                       stats.get('original_tokens', 0),
+                                       stats.get('compressed_tokens', 0),
+                                       stats.get('compression_ratio', 0.0)
+                                   ))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка обновления статистики компрессии: {e}")
+
+    def save_intermediate_result(self, session_id: str, result_type: str,
+                                 data: Dict[str, Any], metadata: Dict[str, Any] = None):
+        """Сохранить промежуточный результат"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                data_json = json.dumps(data, ensure_ascii=False)
+                metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+
+                cursor.execute('''
+                               INSERT INTO intermediate_results
+                                   (session_id, result_type, data, metadata)
+                               VALUES (?, ?, ?, ?)
+                               ''', (session_id, result_type, data_json, metadata_json))
+
+                conn.commit()
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка сохранения промежуточного результата: {e}")
+
+    def load_session(self, session_id: str) -> Dict[str, Any]:
+        """Загрузить все данные сессии из базы данных"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
+                session_row = cursor.fetchone()
+
+                if not session_row:
+                    return None
+
+                session_data = dict(session_row)
+
+                if session_data.get('metadata'):
+                    try:
+                        metadata = json.loads(session_data['metadata'])
+                        session_data.update(metadata)
+                    except json.JSONDecodeError:
+                        pass
+
+                cursor.execute('''
+                               SELECT role, content, tokens, cost, model, temperature
+                               FROM messages
+                               WHERE session_id = ?
+                               ORDER BY message_index
+                               ''', (session_id,))
+
+                messages = []
+                for row in cursor.fetchall():
+                    messages.append({
+                        'role': row['role'],
+                        'text': row['content']
+                    })
+
+                cursor.execute('''
+                               SELECT summary
+                               FROM compressed_history
+                               WHERE session_id = ?
+                               ORDER BY created_at
+                               ''', (session_id,))
+
+                compressed_history = [row['summary'] for row in cursor.fetchall()]
+
+                cursor.execute("SELECT * FROM token_stats WHERE session_id = ?", (session_id,))
+                token_stats_row = cursor.fetchone()
+
+                cursor.execute("SELECT * FROM compression_stats WHERE session_id = ?", (session_id,))
+                compression_stats_row = cursor.fetchone()
+
+                result = {
+                    'session_id': session_id,
+                    'chat_mode': session_data.get('chat_mode', 'default'),
+                    'temperature': session_data.get('temperature', 0.7),
+                    'selected_model': session_data.get('selected_model', 'yandexgpt-lite'),
+                    'custom_system_prompt': session_data.get('custom_system_prompt'),
+                    'current_role_name': session_data.get('current_role_name', 'Обычный ассистент'),
+                    'chat_history': messages,
+                    'compressed_history': compressed_history,
+                    'tz_data': session_data.get('tz_data'),
+                    'tz_complete': session_data.get('tz_complete', False),
+                    'last_system_prompt': session_data.get('last_system_prompt'),
+                    'compression_enabled': session_data.get('compression_enabled', True)
+                }
+
+                if token_stats_row:
+                    token_stats = dict(token_stats_row)
+                    result['total_input_tokens'] = token_stats.get('total_input_tokens', 0)
+                    result['total_output_tokens'] = token_stats.get('total_output_tokens', 0)
+                    result['total_cost'] = token_stats.get('total_cost', 0.0)
+
+                if compression_stats_row:
+                    compression_stats = dict(compression_stats_row)
+                    result['compression_stats'] = {
+                        'total_compressions': compression_stats.get('total_compressions', 0),
+                        'tokens_saved': compression_stats.get('tokens_saved', 0),
+                        'original_tokens': compression_stats.get('original_tokens', 0),
+                        'compressed_tokens': compression_stats.get('compressed_tokens', 0),
+                        'compression_ratio': compression_stats.get('compression_ratio', 0.0)
+                    }
+
+                logger.info(f"Сессия загружена из базы данных: {session_id}, сообщений: {len(messages)}")
+                return result
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка загрузки сессии: {e}")
+            return None
+
+    def delete_session(self, session_id: str):
+        """Удалить сессию и все связанные данные"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+                conn.commit()
+                logger.info(f"Сессия удалена: {session_id}")
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка удаления сессии: {e}")
+
+    def get_session_list(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Получить список всех сессий"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                               SELECT s.session_id,
+                                      s.created_at,
+                                      s.updated_at,
+                                      s.chat_mode,
+                                      s.current_role_name,
+                                      COUNT(m.id)                                                              as message_count,
+                                      COALESCE(ts.total_input_tokens, 0) +
+                                      COALESCE(ts.total_output_tokens, 0)                                      as total_tokens
+                               FROM sessions s
+                                        LEFT JOIN messages m ON s.session_id = m.session_id
+                                        LEFT JOIN token_stats ts ON s.session_id = ts.session_id
+                               GROUP BY s.session_id
+                               ORDER BY s.updated_at DESC LIMIT ?
+                               ''', (limit,))
+
+                sessions = []
+                for row in cursor.fetchall():
+                    sessions.append({
+                        'session_id': row['session_id'],
+                        'created_at': row['created_at'],
+                        'updated_at': row['updated_at'],
+                        'chat_mode': row['chat_mode'],
+                        'current_role_name': row['current_role_name'],
+                        'message_count': row['message_count'],
+                        'total_tokens': row['total_tokens']
+                    })
+
+                return sessions
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка получения списка сессий: {e}")
+            return []
+
+    def export_session(self, session_id: str, format: str = 'json') -> Optional[str]:
+        """Экспортировать сессию в JSON"""
+        try:
+            session_data = self.load_session(session_id)
+            if not session_data:
+                return None
+
+            export_data = {
+                'session_data': session_data,
+                'export_info': {
+                    'export_date': datetime.now().isoformat(),
+                    'format': format,
+                    'database_version': '1.0'
+                }
+            }
+
+            if format == 'json':
+                return json.dumps(export_data, ensure_ascii=False, indent=2)
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Ошибка экспорта сессии: {e}")
+            return None
+
+    def cleanup_old_sessions(self, days_old: int = 30):
+        """Очистить старые сессии (старше указанного количества дней)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                               DELETE
+                               FROM sessions
+                               WHERE julianday('now') - julianday(updated_at) > ?
+                               ''', (days_old,))
+
+                deleted_count = cursor.rowcount
+                conn.commit()
+
+                logger.info(f"Удалено старых сессий: {deleted_count}")
+                return deleted_count
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка очистки старых сессий: {e}")
+            return 0
+
+    def get_database_stats(self) -> Dict[str, Any]:
+        """Получить статистику базы данных"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                stats = {}
+
+                cursor.execute("SELECT COUNT(*) FROM sessions")
+                stats['total_sessions'] = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM messages")
+                stats['total_messages'] = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM compressed_history")
+                stats['total_compressed_histories'] = cursor.fetchone()[0]
+
+                cursor.execute("SELECT SUM(total_input_tokens + total_output_tokens) FROM token_stats")
+                total_tokens = cursor.fetchone()[0]
+                stats['total_tokens'] = total_tokens if total_tokens else 0
+
+                if os.path.exists(self.db_path):
+                    stats['database_size_mb'] = round(os.path.getsize(self.db_path) / (1024 * 1024), 2)
+
+                return stats
+
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка получения статистики базы данных: {e}")
+            return {}
+
+    def get_last_session_id(self):
+        """Получить ID последней сессии (самой свежей по updated_at)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                               SELECT session_id
+                               FROM sessions
+                               ORDER BY updated_at DESC LIMIT 1
+                               ''')
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка получения последней сессии: {e}")
+            return None
+
+
+# Инициализация внешней памяти
+try:
+    memory = MemoryStorage()
+    logger.info("✅ Внешняя память (SQLite) подключена")
+except Exception as e:
+    logger.error(f"❌ Ошибка инициализации внешней памяти: {e}")
+    memory = None
+
+
 def init_session():
-    """Инициализация сессии с настройками по умолчанию"""
+    """Инициализация сессии с загрузкой последней сессии из БД"""
+    session_id = session.get('session_id')
+
+    # Если memory доступен и в сессии нет ID, пробуем загрузить последнюю сессию
+    if memory and not session_id:
+        last_session_id = memory.get_last_session_id()
+        if last_session_id:
+            saved_session = memory.load_session(last_session_id)
+            if saved_session:
+                logger.info(f"✅ Автоматически загружена последняя сессия: {last_session_id}")
+
+                # Восстанавливаем все данные из сохраненной сессии
+                for key, value in saved_session.items():
+                    session[key] = value
+
+                session['session_id'] = last_session_id
+
+                # Обновляем время доступа к сессии
+                memory.save_session(last_session_id, {
+                    'chat_mode': session.get('chat_mode', 'default'),
+                    'temperature': session.get('temperature', 0.7),
+                    'selected_model': session.get('selected_model', 'yandexgpt-lite'),
+                    'custom_system_prompt': session.get('custom_system_prompt'),
+                    'current_role_name': session.get('current_role_name', 'Обычный ассистент'),
+                    'tz_data': session.get('tz_data'),
+                    'tz_complete': session.get('tz_complete', False),
+                    'last_system_prompt': session.get('last_system_prompt'),
+                    'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+                })
+
+                # Восстанавливаем историю чата в интерфейсе
+                if session.get('chat_history'):
+                    logger.info(f"Восстановлено сообщений: {len(session['chat_history'])}")
+
+                return
+
+    # Если memory доступен и в сессии есть ID, пробуем загрузить эту сессию
+    if memory and session_id:
+        saved_session = memory.load_session(session_id)
+        if saved_session:
+            logger.info(f"✅ Сессия загружена из внешней памяти: {session_id}")
+
+            for key, value in saved_session.items():
+                session[key] = value
+
+            session['session_id'] = session_id
+
+            memory.save_session(session_id, {
+                'chat_mode': session.get('chat_mode', 'default'),
+                'temperature': session.get('temperature', 0.7),
+                'selected_model': session.get('selected_model', 'yandexgpt-lite'),
+                'custom_system_prompt': session.get('custom_system_prompt'),
+                'current_role_name': session.get('current_role_name', 'Обычный ассистент'),
+                'tz_data': session.get('tz_data'),
+                'tz_complete': session.get('tz_complete', False),
+                'last_system_prompt': session.get('last_system_prompt'),
+                'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+            })
+
+            return
+
+    # Новая сессия (когда нет сохраненных сессий или memory недоступен)
     if 'chat_history' not in session:
         session['chat_history'] = []
     if 'compressed_history' not in session:
@@ -127,6 +873,7 @@ def init_session():
         session['temperature'] = "0.7"
     if 'selected_model' not in session:
         session['selected_model'] = 'yandexgpt-lite'
+
     # Статистика токенов
     if 'total_input_tokens' not in session:
         session['total_input_tokens'] = 0
@@ -134,6 +881,7 @@ def init_session():
         session['total_output_tokens'] = 0
     if 'total_cost' not in session:
         session['total_cost'] = 0.0
+
     # Статистика компрессии
     if 'compression_stats' not in session:
         session['compression_stats'] = {
@@ -146,6 +894,23 @@ def init_session():
     if 'last_compression_message_id' not in session:
         session['last_compression_message_id'] = -1
 
+    # Сохраняем новую сессию во внешней памяти
+    if memory:
+        memory.save_session(session['session_id'], {
+            'chat_mode': session['chat_mode'],
+            'temperature': session['temperature'],
+            'selected_model': session['selected_model'],
+            'custom_system_prompt': session['custom_system_prompt'],
+            'current_role_name': session['current_role_name'],
+            'tz_data': session['tz_data'],
+            'tz_complete': session['tz_complete'],
+            'last_system_prompt': session['last_system_prompt'],
+            'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+        })
+
+        memory.update_token_stats(session['session_id'], 0, 0, 0.0)
+        memory.update_compression_stats(session['session_id'], session['compression_stats'])
+
 
 def get_model_config(model_key):
     """Получить конфигурацию модели по ключу"""
@@ -156,19 +921,17 @@ def estimate_tokens(text):
     """Примерная оценка количества токенов в тексте"""
     if not text:
         return 0
-    # Более точная оценка: 1 токен ≈ 4 символа
     return max(1, int(len(text) / 4))
 
 
 def analyze_response_behavior(input_tokens, output_tokens, temperature, response_text, model_config):
     """Анализ поведения модели на основе токенов и температуры"""
-    # Убедимся, что все значения являются числами
     try:
         input_tokens = int(input_tokens) if input_tokens is not None else 0
         output_tokens = int(output_tokens) if output_tokens is not None else 0
         temperature = float(temperature) if temperature is not None else 0.7
     except (ValueError, TypeError) as e:
-        logger.error(f"Ошибка преобразования типов в analyze_response_behavior: {e}")
+        logger.error(f"Ошибка преобразования типов: {e}")
         input_tokens = 0
         output_tokens = 0
         temperature = 0.7
@@ -182,20 +945,18 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
         'token_ratio': 0
     }
 
-    # Рассчитываем соотношение токенов
     if input_tokens > 0:
         token_ratio = output_tokens / input_tokens
         behavior_analysis['token_ratio'] = round(token_ratio, 2)
 
-        # Оценка эффективности
-        if input_tokens < 50:  # Короткий запрос
+        if input_tokens < 50:
             if output_tokens < 30:
                 behavior_analysis['efficiency_score'] = 30
             elif output_tokens > 500:
                 behavior_analysis['efficiency_score'] = 90
             else:
                 behavior_analysis['efficiency_score'] = 70
-        else:  # Длинный запрос
+        else:
             if token_ratio > 2:
                 behavior_analysis['efficiency_score'] = 90
             elif token_ratio > 1:
@@ -205,7 +966,6 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
             else:
                 behavior_analysis['efficiency_score'] = 40
 
-    # Уровень многословности
     if output_tokens < 30:
         behavior_analysis['verbosity_level'] = 'очень краткий'
     elif output_tokens < 100:
@@ -217,7 +977,6 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
     else:
         behavior_analysis['verbosity_level'] = 'очень подробный'
 
-    # Влияние температуры
     if temperature < 0.2:
         behavior_analysis['temperature_effect'] = 'очень детерминированный'
     elif temperature < 0.4:
@@ -229,7 +988,6 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
     else:
         behavior_analysis['temperature_effect'] = 'очень креативный'
 
-    # Анализ структуры ответа
     if not response_text:
         response_text = ""
 
@@ -247,7 +1005,6 @@ def analyze_response_behavior(input_tokens, output_tokens, temperature, response
     else:
         behavior_analysis['structure'] = 'сплошной текст'
 
-    # Рекомендации
     if behavior_analysis.get('token_ratio', 0) > 3:
         behavior_analysis['recommendations'].append('Модель генерирует очень подробные ответы')
     elif behavior_analysis.get('token_ratio', 0) < 0.3:
@@ -278,11 +1035,9 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
         'messages': messages
     }
 
-    # Оцениваем количество входных токенов
     input_text = ' '.join([msg['text'] for msg in messages])
     estimated_input_tokens = estimate_tokens(input_text)
 
-    # Замер времени выполнения
     start_time = time.time()
     response = requests.post(YANDEX_API_BASE_URL, headers=headers, json=payload, timeout=60)
     end_time = time.time()
@@ -294,12 +1049,10 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
 
     result = response.json()
 
-    # Получаем количество токенов из ответа
     input_tokens = estimated_input_tokens
     output_tokens = 0
 
     try:
-        # Извлекаем ответ
         response_text = ""
         if 'result' in result and 'alternatives' in result['result']:
             response_text = result['result']['alternatives'][0]['message']['text']
@@ -308,10 +1061,8 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
         else:
             response_text = extract_message_from_response(result)
 
-        # Оцениваем выходные токены
         output_tokens = estimate_tokens(response_text)
 
-        # Пытаемся получить точные значения из API
         if 'result' in result and 'usage' in result['result']:
             usage = result['result']['usage']
             input_tokens = int(usage.get('inputTextTokens', estimated_input_tokens))
@@ -323,10 +1074,8 @@ def call_yandex_api(model_config, messages, temperature, max_tokens):
 
     except (KeyError, IndexError, ValueError, TypeError) as e:
         logger.error(f"Ошибка при обработке ответа API: {e}")
-        # Используем оценки
         output_tokens = estimate_tokens(extract_message_from_response(result))
 
-    # Рассчитываем стоимость
     try:
         input_cost = (input_tokens / 1000.0) * float(model_config['cost_per_1k_input_tokens'])
         output_cost = (output_tokens / 1000.0) * float(model_config['cost_per_1k_output_tokens'])
@@ -343,28 +1092,24 @@ def compress_history(messages_to_compress, model_key='yandexgpt-lite'):
     if not messages_to_compress or len(messages_to_compress) < 2:
         return "", 0, 0, 0.0
 
-    # Подготавливаем сообщения для компрессии
     compression_messages = [
         {'role': 'system', 'text': SYSTEM_PROMPTS['history_compression']},
         {'role': 'user',
          'text': f"Создай краткое изложение этого диалога:\n\n{format_messages_for_compression(messages_to_compress)}"}
     ]
 
-    # Получаем конфигурацию модели
     model_config = get_model_config(model_key)
 
-    # Вызываем API для создания summary
     result, execution_time, input_tokens, output_tokens, cost = call_yandex_api(
         model_config=model_config,
         messages=compression_messages,
-        temperature=0.3,  # Низкая температура для более точного summary
+        temperature=0.3,
         max_tokens=COMPRESSION_CONFIG['max_summary_tokens']
     )
 
     if result is None:
         return "", 0, 0, 0.0
 
-    # Извлекаем summary
     summary = ""
     try:
         if 'result' in result and 'alternatives' in result['result']:
@@ -392,13 +1137,11 @@ def should_compress_history(full_history):
     if not COMPRESSION_CONFIG['enable_compression']:
         return False
 
-    # Проверяем по количеству сообщений
     if len(full_history) >= COMPRESSION_CONFIG['compression_interval']:
         return True
 
-    # Проверяем по количеству токенов (опционально)
     total_tokens = sum(estimate_tokens(msg['text']) for msg in full_history)
-    if total_tokens > 2000:  # Если больше 2000 токенов
+    if total_tokens > 2000:
         return True
 
     return False
@@ -408,12 +1151,10 @@ def get_compression_candidate(full_history, last_compressed_id):
     """Получить сообщения для компрессии"""
     keep_last = COMPRESSION_CONFIG['keep_last_messages']
 
-    # Ищем сообщения, которые еще не были сжаты
     uncompressed_messages = []
     for i, msg in enumerate(full_history):
         if i <= last_compressed_id:
             continue
-        # Исключаем последние сообщения
         if i >= len(full_history) - keep_last:
             break
         uncompressed_messages.append(msg)
@@ -452,26 +1193,39 @@ def get_effective_history():
     compressed_history = session.get('compressed_history', [])
     keep_last = COMPRESSION_CONFIG['keep_last_messages']
 
-    # Если нет сжатой истории, возвращаем полную историю
     if not compressed_history:
         return full_history[-keep_last * 2:] if len(full_history) > keep_last * 2 else full_history
 
-    # Объединяем сжатую историю с последними сообщениями
     last_messages = full_history[-keep_last:] if len(full_history) > keep_last else full_history
 
     effective_history = []
 
-    # Добавляем сжатую историю
     for summary in compressed_history:
         effective_history.append({
             'role': 'system',
             'text': f"📚 Краткое содержание предыдущего диалога: {summary}"
         })
 
-    # Добавляем последние сообщения
     effective_history.extend(last_messages)
 
     return effective_history
+
+
+def extract_message_from_response(result):
+    """Извлечь сообщение из ответа API при нестандартной структуре"""
+    try:
+        if 'result' in result and 'alternatives' in result['result']:
+            return result['result']['alternatives'][0]['message']['text']
+
+        result_str = json.dumps(result)
+        if '"text":' in result_str:
+            match = re.search(r'"text":\s*"([^"]+)"', result_str)
+            if match:
+                return match.group(1)
+
+        return "Ответ получен, но не удалось распарсить структуру."
+    except:
+        return "Ошибка при обработке ответа от модели."
 
 
 @app.route('/')
@@ -489,7 +1243,8 @@ def index():
                            total_input_tokens=session.get('total_input_tokens', 0),
                            total_output_tokens=session.get('total_output_tokens', 0),
                            total_cost=session.get('total_cost', 0),
-                           compression_stats=session.get('compression_stats', {}))
+                           compression_stats=session.get('compression_stats', {}),
+                           memory_enabled=memory is not None)
 
 
 @app.route('/send_message', methods=['POST'])
@@ -501,7 +1256,6 @@ def send_message():
         require_json = request.json.get('require_json', False)
         model_key = request.json.get('model', 'yandexgpt-lite')
 
-        # Получаем температуру из запроса
         temperature = request.json.get('temperature')
         if temperature is not None:
             try:
@@ -517,11 +1271,25 @@ def send_message():
 
         init_session()
 
-        # Сохраняем температуру и модель в сессии
+        session_id = session['session_id']
+
         session['temperature'] = str(temperature_val)
         session['selected_model'] = model_key
 
-        # Проверяем, является ли сообщение командой
+        if memory:
+            memory.save_session(session_id, {
+                'chat_mode': session['chat_mode'],
+                'temperature': session['temperature'],
+                'selected_model': session['selected_model'],
+                'custom_system_prompt': session['custom_system_prompt'],
+                'current_role_name': session['current_role_name'],
+                'tz_data': session['tz_data'],
+                'tz_complete': session['tz_complete'],
+                'last_system_prompt': session['last_system_prompt'],
+                'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+            })
+
+        # Обработка команд
         if user_message.lower().startswith('/role '):
             return handle_role_command(user_message)
         elif user_message.lower().startswith('/system '):
@@ -536,66 +1304,61 @@ def send_message():
             return show_stats()
         elif user_message.lower() == '/compression_stats':
             return show_compression_stats()
+        elif user_message.lower() == '/memory_stats':
+            return show_memory_stats()
+        elif user_message.lower() == '/memory_sessions':
+            return list_sessions_command()
+        elif user_message.lower() == '/memory_export':
+            return export_current_session()
+        elif user_message.lower() == '/memory_cleanup':
+            return cleanup_sessions_command()
 
-        # Получаем текущий режим чата
         chat_mode = session.get('chat_mode', 'default')
         tz_complete = session.get('tz_complete', False)
 
-        # Если сбор ТЗ завершен, но не в режиме ТЗ - сбрасываем флаг
         if tz_complete and chat_mode != 'tz_collection':
             session['tz_complete'] = False
             tz_complete = False
 
-        # Если сбор ТЗ завершен, не принимаем новые сообщения
         if tz_complete:
             return jsonify({
                 'error': 'Сбор ТЗ завершен. Начните новый сбор или очистите историю.',
                 'tz_data': session.get('tz_data')
             }), 400
 
-        # Определяем фактический режим работы
         if require_json and chat_mode not in ['tz_collection']:
             actual_mode = 'json_format'
         else:
             actual_mode = chat_mode
 
-        # Получаем полную историю диалога из сессии
         full_history = session.get('chat_history', [])
-
-        # Добавляем сообщение пользователя в полную историю
         full_history.append({'role': 'user', 'text': user_message})
 
-        # Проверяем, нужно ли сжимать историю
         compression_occurred = False
         compression_cost = 0.0
         compression_input_tokens = 0
         compression_output_tokens = 0
 
         if COMPRESSION_CONFIG['enable_compression'] and should_compress_history(full_history):
-            # Получаем сообщения для компрессии
             candidate_messages = get_compression_candidate(
                 full_history,
                 session.get('last_compression_message_id', -1)
             )
 
             if candidate_messages and len(candidate_messages) >= 2:
-                # Создаем summary
                 summary, comp_input, comp_output, comp_cost = compress_history(
                     candidate_messages,
                     COMPRESSION_CONFIG['summary_model']
                 )
 
                 if summary:
-                    # Добавляем summary в сжатую историю
                     compressed_history = session.get('compressed_history', [])
                     compressed_history.append(summary)
                     session['compressed_history'] = compressed_history
 
-                    # Обновляем ID последнего сжатого сообщения
                     last_msg_index = full_history.index(candidate_messages[-1])
                     session['last_compression_message_id'] = last_msg_index
 
-                    # Обновляем статистику компрессии
                     original_tokens = sum(estimate_tokens(msg['text']) for msg in candidate_messages)
                     compressed_tokens = estimate_tokens(summary)
                     update_compression_stats(original_tokens, compressed_tokens)
@@ -607,24 +1370,18 @@ def send_message():
 
                     logger.info(
                         f"✅ Сжатие истории: {len(candidate_messages)} сообщений -> summary ({compressed_tokens} токенов)")
-                    logger.info(f"   Экономия: {original_tokens - compressed_tokens} токенов")
 
-        # Получаем эффективную историю (сжатая + последние сообщения)
         effective_history = get_effective_history()
 
-        # Выбираем системный промпт в зависимости от режима
         if session.get('custom_system_prompt'):
             system_prompt = session['custom_system_prompt']
         else:
             system_prompt = SYSTEM_PROMPTS.get(actual_mode, SYSTEM_PROMPTS['default'])
 
-        # Сохраняем текущий промпт для будущих запросов
         session['last_system_prompt'] = system_prompt
 
-        # Подготавливаем сообщения для API
         messages = [{'role': 'system', 'text': system_prompt}]
 
-        # Добавляем эффективную историю диалога
         max_messages = 20 if actual_mode == 'tz_collection' else 15
         filtered_history = []
         for msg in effective_history:
@@ -637,10 +1394,8 @@ def send_message():
                 'text': msg['text']
             })
 
-        # Получаем конфигурацию выбранной модели
         model_config = get_model_config(model_key)
 
-        # Настраиваем параметры в зависимости от режима
         if actual_mode == 'json_format':
             max_tokens = min(1500, int(model_config['max_tokens']))
         elif actual_mode == 'tz_collection':
@@ -650,7 +1405,6 @@ def send_message():
         else:
             max_tokens = min(1500, int(model_config['max_tokens']))
 
-        # Вызываем API с замером метрик
         result, execution_time, input_tokens, output_tokens, cost = call_yandex_api(
             model_config, messages, temperature_val, max_tokens
         )
@@ -658,7 +1412,6 @@ def send_message():
         if result is None:
             return jsonify({'error': 'Ошибка при вызове API модели'}), 500
 
-        # Получаем ответ ассистента
         assistant_message = ""
         try:
             if 'result' in result and 'alternatives' in result['result']:
@@ -671,7 +1424,6 @@ def send_message():
             logger.error(f"Ошибка при извлечении ответа: {e}")
             assistant_message = "Не удалось получить ответ от модели."
 
-        # Убедимся, что токены - целые числа
         try:
             input_tokens = int(input_tokens)
             output_tokens = int(output_tokens)
@@ -679,33 +1431,83 @@ def send_message():
             input_tokens = estimate_tokens(' '.join([msg['text'] for msg in messages]))
             output_tokens = estimate_tokens(assistant_message)
 
-        # Добавляем токены компрессии к общим токенам
         total_input = input_tokens + compression_input_tokens
         total_output = output_tokens + compression_output_tokens
         total_cost_api = cost + compression_cost
 
-        # Анализируем поведение модели на основе токенов и температуры
         behavior_analysis = analyze_response_behavior(
             input_tokens, output_tokens, temperature_val, assistant_message, model_config
         )
 
-        # Обновляем общую статистику токенов
         session['total_input_tokens'] = session.get('total_input_tokens', 0) + total_input
         session['total_output_tokens'] = session.get('total_output_tokens', 0) + total_output
         session['total_cost'] = session.get('total_cost', 0.0) + total_cost_api
 
-        # Добавляем ответ ассистента в полную историю
         full_history.append({'role': 'assistant', 'text': assistant_message})
 
-        # Ограничиваем полную историю (максимум 100 сообщений)
         if len(full_history) > 100:
             full_history = full_history[-100:]
 
-        # Сохраняем обновленную историю в сессии
         session['chat_history'] = full_history
         session.modified = True
 
-        # Формируем ответ для клиента
+        if memory:
+            memory.save_message(
+                session_id=session_id,
+                message_index=len(full_history) - 2,
+                role='user',
+                content=user_message,
+                tokens=0,
+                cost=0.0,
+                model=model_key,
+                temperature=temperature_val
+            )
+
+            memory.save_message(
+                session_id=session_id,
+                message_index=len(full_history) - 1,
+                role='assistant',
+                content=assistant_message,
+                tokens=output_tokens,
+                cost=cost,
+                model=model_key,
+                temperature=temperature_val
+            )
+
+            memory.save_intermediate_result(
+                session_id=session_id,
+                result_type='api_response',
+                data=result,
+                metadata={
+                    'model': model_key,
+                    'temperature': temperature_val,
+                    'input_tokens': input_tokens,
+                    'output_tokens': output_tokens,
+                    'execution_time': execution_time
+                }
+            )
+
+            memory.update_token_stats(
+                session_id=session_id,
+                input_tokens=total_input,
+                output_tokens=total_output,
+                cost=total_cost_api
+            )
+
+            if compression_occurred:
+                memory.update_compression_stats(
+                    session_id=session_id,
+                    stats=session['compression_stats']
+                )
+
+                memory.save_compressed_history(
+                    session_id=session_id,
+                    summary=summary,
+                    original_messages_count=len(candidate_messages),
+                    original_tokens=original_tokens,
+                    compressed_tokens=compressed_tokens
+                )
+
         response_data = {
             'response': assistant_message,
             'history': full_history,
@@ -733,7 +1535,9 @@ def send_message():
                 'cost': round(compression_cost, 5),
                 'input_tokens': compression_input_tokens,
                 'output_tokens': compression_output_tokens
-            }
+            },
+            'memory_enabled': memory is not None,
+            'session_id': session_id
         }
 
         if compression_occurred:
@@ -741,8 +1545,6 @@ def send_message():
 
         logger.info(f"Модель: {model_key}, Вход: {input_tokens}, Выход: {output_tokens}, "
                     f"Время: {execution_time:.2f}с, Стоимость: {cost:.5f} руб")
-        if compression_occurred:
-            logger.info(f"Сжатие: +{compression_input_tokens} входных, +{compression_output_tokens} выходных токенов")
 
         return jsonify(response_data)
 
@@ -752,23 +1554,6 @@ def send_message():
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         return jsonify({'error': f'Внутренняя ошибка сервера: {str(e)}'}), 500
-
-
-def extract_message_from_response(result):
-    """Извлечь сообщение из ответа API при нестандартной структуре"""
-    try:
-        if 'result' in result and 'alternatives' in result['result']:
-            return result['result']['alternatives'][0]['message']['text']
-
-        result_str = json.dumps(result)
-        if '"text":' in result_str:
-            match = re.search(r'"text":\s*"([^"]+)"', result_str)
-            if match:
-                return match.group(1)
-
-        return "Ответ получен, но не удалось распарсить структуру."
-    except:
-        return "Ошибка при обработке ответа от модели."
 
 
 def handle_role_command(user_message):
@@ -819,6 +1604,13 @@ def handle_role_command(user_message):
         session['chat_history'] = chat_history
         session.modified = True
 
+        if memory:
+            memory.save_session(session['session_id'], {
+                'chat_mode': session['chat_mode'],
+                'custom_system_prompt': session['custom_system_prompt'],
+                'current_role_name': session['current_role_name']
+            })
+
         return jsonify({
             'response': system_message,
             'history': chat_history,
@@ -860,6 +1652,13 @@ def handle_system_command(user_message):
         session['chat_history'] = chat_history
         session.modified = True
 
+        if memory:
+            memory.save_session(session['session_id'], {
+                'chat_mode': session['chat_mode'],
+                'custom_system_prompt': session['custom_system_prompt'],
+                'current_role_name': session['current_role_name']
+            })
+
         return jsonify({
             'response': system_message,
             'history': chat_history,
@@ -900,6 +1699,13 @@ def reset_role():
     chat_history.append({'role': 'system', 'text': system_message})
     session['chat_history'] = chat_history
     session.modified = True
+
+    if memory:
+        memory.save_session(session['session_id'], {
+            'chat_mode': session['chat_mode'],
+            'custom_system_prompt': session['custom_system_prompt'],
+            'current_role_name': session['current_role_name']
+        })
 
     return jsonify({
         'response': system_message,
@@ -958,9 +1764,6 @@ def show_compression_stats():
 • Сжатых токенов: {compression_stats.get('compressed_tokens', 0)}
 • Токенов сэкономлено: {compression_stats.get('tokens_saved', 0)}
 • Коэффициент сжатия: {compression_stats.get('compression_ratio', 0)}%
-
-💡 **Эффективность:**
-{'- Компрессия работает эффективно' if compression_stats.get('compression_ratio', 100) < 50 else '- Компрессия может быть улучшена'}
 """
 
     return jsonify({
@@ -969,6 +1772,150 @@ def show_compression_stats():
         'current_role': session.get('current_role_name', 'Обычный ассистент'),
         'history_count': len(session.get('chat_history', []))
     })
+
+
+def show_memory_stats():
+    """Показать статистику внешней памяти"""
+    if not memory:
+        return jsonify({
+            'response': "❌ Внешняя память не инициализирована",
+            'is_command': True
+        })
+
+    try:
+        stats = memory.get_database_stats()
+
+        stats_text = f"""
+💾 **Статистика внешней памяти (SQLite):**
+
+• Всего сессий: {stats.get('total_sessions', 0)}
+• Всего сообщений: {stats.get('total_messages', 0)}
+• Сжатых историй: {stats.get('total_compressed_histories', 0)}
+• Всего токенов: {stats.get('total_tokens', 0)}
+• Размер БД: {stats.get('database_size_mb', 0)} МБ
+
+🔗 **Команды управления памятью:**
+• `/memory_sessions` - список сессий
+• `/memory_export` - экспорт текущей сессии
+• `/memory_cleanup` - очистка старых сессий
+"""
+
+        return jsonify({
+            'response': stats_text,
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+    except Exception as e:
+        logger.error(f"Error getting memory stats: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка получения статистики памяти: {str(e)}",
+            'is_command': True
+        })
+
+
+def list_sessions_command():
+    """Команда для вывода списка сессий"""
+    if not memory:
+        return jsonify({
+            'response': "❌ Внешняя память не инициализирована",
+            'is_command': True
+        })
+
+    try:
+        sessions = memory.get_session_list(5)
+
+        if not sessions:
+            return jsonify({
+                'response': "📂 Нет сохраненных сессий во внешней памяти",
+                'is_command': True
+            })
+
+        sessions_text = "📂 **Последние сессии во внешней памяти:**\n\n"
+        for i, sess in enumerate(sessions, 1):
+            sessions_text += f"{i}. **{sess['session_id'][:8]}...** - {sess['message_count']} сообщений, {sess['total_tokens']} токенов\n"
+            sessions_text += f"   Режим: {sess['chat_mode']}, Роль: {sess['current_role_name']}\n"
+            sessions_text += f"   Обновлено: {sess['updated_at'][:16]}\n\n"
+
+        return jsonify({
+            'response': sessions_text,
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+    except Exception as e:
+        logger.error(f"Error listing sessions: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка получения списка сессий: {str(e)}",
+            'is_command': True
+        })
+
+
+def export_current_session():
+    """Команда для экспорта текущей сессии"""
+    if not memory:
+        return jsonify({
+            'response': "❌ Внешняя память не инициализирована",
+            'is_command': True
+        })
+
+    try:
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({
+                'response': "❌ Нет активной сессии",
+                'is_command': True
+            })
+
+        export_data = memory.export_session(session_id)
+        if not export_data:
+            return jsonify({
+                'response': "❌ Ошибка экспорта сессии",
+                'is_command': True
+            })
+
+        # Сохраняем экспорт в файл
+        filename = f"session_export_{session_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(export_data)
+
+        return jsonify({
+            'response': f"✅ Сессия экспортирована в файл: `{filename}`",
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+    except Exception as e:
+        logger.error(f"Error exporting session: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка экспорта сессии: {str(e)}",
+            'is_command': True
+        })
+
+
+def cleanup_sessions_command():
+    """Команда для очистки старых сессий"""
+    if not memory:
+        return jsonify({
+            'response': "❌ Внешняя память не инициализирована",
+            'is_command': True
+        })
+
+    try:
+        deleted_count = memory.cleanup_old_sessions(7)
+
+        return jsonify({
+            'response': f"✅ Удалено {deleted_count} сессий старше 7 дней",
+            'is_command': True,
+            'current_role': session.get('current_role_name', 'Обычный ассистент'),
+            'history_count': len(session.get('chat_history', []))
+        })
+    except Exception as e:
+        logger.error(f"Error cleaning up sessions: {str(e)}")
+        return jsonify({
+            'response': f"❌ Ошибка очистки сессий: {str(e)}",
+            'is_command': True
+        })
 
 
 def show_help():
@@ -981,6 +1928,10 @@ def show_help():
 /reset - сбросить роль
 /stats - показать статистику токенов
 /compression_stats - показать статистику компрессии
+/memory_stats - показать статистику памяти
+/memory_sessions - список сохраненных сессий
+/memory_export - экспорт текущей сессии
+/memory_cleanup - очистка старых сессий
 /help - показать справку
 """
     return jsonify({
@@ -1012,7 +1963,6 @@ def set_mode():
                 'role': 'assistant',
                 'text': 'Здравствуйте! Я помогу вам составить Техническое Задание. Расскажите о вашем проекте.'
             }]
-            # Сбрасываем сжатую историю при смене режима
             session['compressed_history'] = []
             session['last_compression_message_id'] = -1
         else:
@@ -1021,6 +1971,15 @@ def set_mode():
 
         session['chat_mode'] = mode
         session.modified = True
+
+        if memory:
+            memory.save_session(session['session_id'], {
+                'chat_mode': session['chat_mode'],
+                'custom_system_prompt': session['custom_system_prompt'],
+                'current_role_name': session['current_role_name'],
+                'tz_data': session['tz_data'],
+                'tz_complete': session['tz_complete']
+            })
 
         return jsonify({
             'success': True,
@@ -1038,15 +1997,35 @@ def set_mode():
 def clear_history():
     """Очистка истории диалога"""
     init_session()
+
+    session_id = session['session_id']
+
+    if memory:
+        memory.delete_session(session_id)
+        memory.save_session(session_id, {
+            'chat_mode': session.get('chat_mode', 'default'),
+            'temperature': session.get('temperature', 0.7),
+            'selected_model': session.get('selected_model', 'yandexgpt-lite'),
+            'custom_system_prompt': session.get('custom_system_prompt'),
+            'current_role_name': session.get('current_role_name', 'Обычный ассистент'),
+            'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+        })
+        memory.update_token_stats(session_id, 0, 0, 0.0)
+        memory.update_compression_stats(session_id, {
+            'total_compressions': 0,
+            'tokens_saved': 0,
+            'original_tokens': 0,
+            'compressed_tokens': 0,
+            'compression_ratio': 0.0
+        })
+
     session['chat_history'] = []
     session['compressed_history'] = []
     session['tz_data'] = None
     session['tz_complete'] = False
-    # Сбрасываем статистику
     session['total_input_tokens'] = 0
     session['total_output_tokens'] = 0
     session['total_cost'] = 0.0
-    # Сбрасываем статистику компрессии
     session['compression_stats'] = {
         'total_compressions': 0,
         'tokens_saved': 0,
@@ -1057,7 +2036,7 @@ def clear_history():
     session['last_compression_message_id'] = -1
     session.modified = True
 
-    system_message = "🗑️ История диалога, компрессия и статистика очищены."
+    system_message = "🗑️ История диалога, компрессия и статистика очищены. Внешняя память также очищена."
 
     return jsonify({
         'success': True,
@@ -1078,15 +2057,18 @@ def toggle_compression():
     """Включение/выключение компрессии"""
     init_session()
 
-    # Получаем состояние из запроса или переключаем
     enable = request.json.get('enable')
     if enable is None:
-        # Переключаем текущее состояние
         COMPRESSION_CONFIG['enable_compression'] = not COMPRESSION_CONFIG['enable_compression']
     else:
         COMPRESSION_CONFIG['enable_compression'] = bool(enable)
 
     status = "включена" if COMPRESSION_CONFIG['enable_compression'] else "выключена"
+
+    if memory:
+        memory.save_session(session['session_id'], {
+            'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+        })
 
     return jsonify({
         'success': True,
@@ -1103,7 +2085,8 @@ def api_info():
         'status': status,
         'has_api_key': bool(YANDEX_API_KEY),
         'has_folder_id': bool(YANDEX_FOLDER_ID),
-        'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+        'compression_enabled': COMPRESSION_CONFIG['enable_compression'],
+        'memory_enabled': memory is not None
     })
 
 
@@ -1130,7 +2113,8 @@ def get_session_info():
             'total_cost': session.get('total_cost', 0.0)
         },
         'compression_stats': session.get('compression_stats', {}),
-        'compression_enabled': COMPRESSION_CONFIG['enable_compression']
+        'compression_enabled': COMPRESSION_CONFIG['enable_compression'],
+        'memory_enabled': memory is not None
     })
 
 
@@ -1140,11 +2124,167 @@ def get_models():
     return jsonify(MODELS_CONFIG)
 
 
+# Новые эндпоинты для управления памятью
+
+@app.route('/memory/stats', methods=['GET'])
+def get_memory_stats_api():
+    """Получить статистику внешней памяти"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        stats = memory.get_database_stats()
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'memory_enabled': True
+        })
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики памяти: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/sessions', methods=['GET'])
+def get_sessions_list_api():
+    """Получить список всех сохраненных сессий"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        sessions = memory.get_session_list(limit)
+        return jsonify({
+            'success': True,
+            'sessions': sessions,
+            'count': len(sessions)
+        })
+    except Exception as e:
+        logger.error(f"Ошибка получения списка сессий: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/session/<session_id>', methods=['GET'])
+def load_session_by_id(session_id):
+    """Загрузить конкретную сессию по ID"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        session_data = memory.load_session(session_id)
+        if not session_data:
+            return jsonify({'error': 'Сессия не найдена'}), 404
+
+        return jsonify({
+            'success': True,
+            'session': session_data
+        })
+    except Exception as e:
+        logger.error(f"Ошибка загрузки сессии: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/session/<session_id>/export', methods=['GET'])
+def export_session_api(session_id):
+    """Экспортировать сессию в JSON"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        format_type = request.args.get('format', 'json')
+        export_data = memory.export_session(session_id, format_type)
+
+        if not export_data:
+            return jsonify({'error': 'Сессия не найдена или ошибка экспорта'}), 404
+
+        if format_type == 'json':
+            response = Response(
+                export_data,
+                status=200,
+                mimetype='application/json'
+            )
+            response.headers['Content-Disposition'] = f'attachment; filename=session_{session_id}.json'
+            return response
+        else:
+            return jsonify({'error': 'Неподдерживаемый формат экспорта'}), 400
+    except Exception as e:
+        logger.error(f"Ошибка экспорта сессии: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/session/<session_id>', methods=['DELETE'])
+def delete_session_api(session_id):
+    """Удалить сессию из внешней памяти"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        memory.delete_session(session_id)
+        return jsonify({
+            'success': True,
+            'message': f'Сессия {session_id} удалена'
+        })
+    except Exception as e:
+        logger.error(f"Ошибка удаления сессии: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/cleanup', methods=['POST'])
+def cleanup_old_sessions_api():
+    """Очистить старые сессии"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        days_old = request.json.get('days_old', 30)
+        deleted_count = memory.cleanup_old_sessions(days_old)
+
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'message': f'Удалено {deleted_count} сессий старше {days_old} дней'
+        })
+    except Exception as e:
+        logger.error(f"Ошибка очистки старых сессий: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/memory/last_session', methods=['GET'])
+def get_last_session_info():
+    """Получить информацию о последней сессии"""
+    if not memory:
+        return jsonify({'error': 'Внешняя память не инициализирована'}), 500
+
+    try:
+        last_session_id = memory.get_last_session_id()
+        if not last_session_id:
+            return jsonify({
+                'success': False,
+                'message': 'Нет сохраненных сессий'
+            })
+
+        session_data = memory.load_session(last_session_id)
+        if not session_data:
+            return jsonify({
+                'success': False,
+                'message': 'Не удалось загрузить сессию'
+            })
+
+        return jsonify({
+            'success': True,
+            'session_id': last_session_id,
+            'message_count': len(session_data.get('chat_history', [])),
+            'updated_at': datetime.now().isoformat(),
+            'chat_mode': session_data.get('chat_mode', 'default'),
+            'current_role': session_data.get('current_role_name', 'Обычный ассистент')
+        })
+    except Exception as e:
+        logger.error(f"Ошибка получения последней сессии: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     """Сервис для обслуживания статических файлов"""
     return send_from_directory(app.static_folder, filename)
-
 
 if __name__ == '__main__':
     # Создаем папки если их нет
