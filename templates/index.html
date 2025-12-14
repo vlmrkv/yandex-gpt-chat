@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Универсальный YandexGPT Агент с Компрессией</title>
+    <title>Универсальный YandexGPT Агент с Компрессией и Внешней Памятью</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -150,6 +150,14 @@
             margin-bottom: 15px;
         }
 
+        .memory-stats {
+            background: linear-gradient(135deg, #9c27b0 0%, #673ab7 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
         .compression-toggle {
             display: flex;
             align-items: center;
@@ -215,12 +223,99 @@
             color: #4caf50;
             margin-right: 5px;
         }
+
+        .memory-event {
+            background: #f3e5f5;
+            border-left: 4px solid #9c27b0;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .memory-event i {
+            color: #9c27b0;
+            margin-right: 5px;
+        }
+
+        .memory-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: #9c27b0;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+
+        .session-item {
+            background: #f8f9fa;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border-left: 3px solid #9c27b0;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .session-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+
+        .session-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .session-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .memory-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .memory-btn {
+            padding: 8px 15px;
+            background: #9c27b0;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.3s;
+        }
+
+        .memory-btn:hover {
+            background: #7b1fa2;
+        }
+
+        .memory-btn.secondary {
+            background: #757575;
+        }
+
+        .memory-btn.secondary:hover {
+            background: #616161;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <header class="header">
-        <h1><i class="fas fa-robot"></i> Универсальный YandexGPT Агент с Компрессией</h1>
+        <h1><i class="fas fa-robot"></i> YandexGPT Агент с Внешней Памятью</h1>
         <div class="api-status" id="apiStatus">
             <span class="status-dot"></span>
             <span class="status-text">Проверка подключения...</span>
@@ -278,6 +373,34 @@
         </div>
     </div>
 
+    <!-- Статистика памяти -->
+    <div class="memory-stats" id="memoryStats" style="display: {% if memory_enabled %}block{% else %}none{% endif %};">
+        <h3><i class="fas fa-database"></i> Внешняя память (SQLite)</h3>
+        <div class="stats-grid" id="memoryStatsGrid">
+            <div class="stat-item">
+                <div class="stat-value">...</div>
+                <div class="stat-label">Загрузка...</div>
+            </div>
+        </div>
+        <div class="memory-actions">
+            <button class="memory-btn" onclick="refreshMemoryStats()">
+                <i class="fas fa-sync-alt"></i> Обновить
+            </button>
+            <button class="memory-btn" onclick="loadLastSession()">
+                <i class="fas fa-history"></i> Загрузить последнюю
+            </button>
+            <button class="memory-btn secondary" onclick="loadSessionsList()">
+                <i class="fas fa-list"></i> Сессии
+            </button>
+            <button class="memory-btn secondary" onclick="exportCurrentSession()">
+                <i class="fas fa-download"></i> Экспорт
+            </button>
+            <button class="memory-btn secondary" onclick="cleanupOldSessions()">
+                <i class="fas fa-trash"></i> Очистка
+            </button>
+        </div>
+    </div>
+
     <!-- Панель моделей -->
     <div class="models-panel">
         <h3><i class="fas fa-brain"></i> Выбор модели:</h3>
@@ -310,6 +433,9 @@
             Температура: <span id="currentTemperature">{{ temperature }}</span>
             <span class="compression-badge" id="compressionBadge" style="display: none;">
                 <i class="fas fa-compress-alt"></i> Компрессия
+            </span>
+            <span class="memory-badge" id="memoryBadge" style="display: {% if memory_enabled %}inline-block{% else %}none{% endif %};">
+                <i class="fas fa-database"></i> Память
             </span>
         </div>
     </div>
@@ -369,13 +495,13 @@
                     <i class="fas fa-trash"></i> Очистить историю
                 </button>
                 <button onclick="exportHistory()">
-                    <i class="fas fa-file-export"></i> Экспорт
+                    <i class="fas fa-file-export"></i> Экспорт чата
                 </button>
                 <button onclick="showTokenStats()">
                     <i class="fas fa-chart-pie"></i> Статистика
                 </button>
-                <button onclick="showCompressionStats()">
-                    <i class="fas fa-compress-alt"></i> Компрессия
+                <button onclick="showMemoryStats()">
+                    <i class="fas fa-database"></i> Память
                 </button>
                 <div class="stats">
                     <i class="fas fa-bolt"></i>
@@ -386,7 +512,7 @@
     </div>
 
     <footer class="footer">
-        <p>Powered by Yandex Cloud API | Анализ токенов и компрессия истории</p>
+        <p>Powered by Yandex Cloud API | Компрессия истории + Внешняя память (SQLite)</p>
     </footer>
 </div>
 
@@ -394,6 +520,22 @@
 <div id="loading" class="loading" style="display: none;">
     <div class="loading-spinner"></div>
     <p id="loadingText">Ассистент думает...</p>
+</div>
+
+<!-- Модальное окно для списка сессий -->
+<div id="sessionsModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fas fa-database"></i> Сохраненные сессии</h3>
+            <span class="close" onclick="closeSessionsModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="sessionsList">
+            <!-- Список сессий будет загружен здесь -->
+        </div>
+        <div class="modal-footer">
+            <button onclick="closeSessionsModal()">Закрыть</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -404,15 +546,155 @@ let models = {};
 let requestCount = 0;
 let isSendingMessage = false;
 let compressionEnabled = true;
+let memoryEnabled = {% if memory_enabled %}true{% else %}false{% endif %};
+let currentSessionId = '{{ session.get("session_id", "") }}';
+
+// Автоматическая загрузка последней сессии
+async function loadLastSession() {
+    if (!memoryEnabled) return;
+
+    try {
+        showLoading(true, 'Загрузка последней сессии...');
+
+        const response = await fetch('/memory/last_session');
+        if (response.ok) {
+            const data = await response.json();
+
+            if (data.success && data.session_id) {
+                // Загружаем сессию
+                const sessionResponse = await fetch(`/memory/session/${data.session_id}`);
+                if (sessionResponse.ok) {
+                    const sessionData = await sessionResponse.json();
+
+                    if (sessionData.success) {
+                        const session = sessionData.session;
+                        currentSessionId = session.session_id;
+
+                        // Очищаем текущий чат
+                        document.getElementById('chatHistory').innerHTML = '';
+
+                        // Восстанавливаем историю сообщений
+                        if (session.chat_history && session.chat_history.length > 0) {
+                            session.chat_history.forEach(msg => {
+                                if (msg.role === 'user') {
+                                    addMessage('user', msg.text);
+                                } else if (msg.role === 'assistant') {
+                                    addMessage('assistant', msg.text);
+                                } else if (msg.role === 'system') {
+                                    addMessage('system', msg.text);
+                                }
+                            });
+                        }
+
+                        // Устанавливаем настройки
+                        if (session.selected_model && models[session.selected_model]) {
+                            setModel(session.selected_model);
+                        }
+
+                        if (session.chat_mode) {
+                            setMode(session.chat_mode);
+                        }
+
+                        if (session.temperature) {
+                            document.getElementById('temperatureSelect').value = session.temperature;
+                            updateTemperatureDescription();
+                        }
+
+                        // Обновляем статистику
+                        updateSessionInfo();
+                        updateStatsPanel();
+                        updateCompressionStats();
+                        refreshMemoryStats();
+
+                        addMessage('system', `✅ Восстановлена последняя сессия от ${data.updated_at.substring(0, 10)} (${session.message_count || 0} сообщений)`);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки последней сессии:', error);
+        addMessage('system', '⚠️ Не удалось загрузить последнюю сессию');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Стили для модального окна
+const modalStyles = `
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+    }
+    .modal-content {
+        background-color: white;
+        margin: 5% auto;
+        padding: 20px;
+        border-radius: 10px;
+        width: 80%;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .modal-header h3 {
+        margin: 0;
+    }
+    .close {
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        color: #666;
+    }
+    .close:hover {
+        color: #000;
+    }
+    .modal-body {
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    .modal-footer {
+        margin-top: 20px;
+        text-align: right;
+        padding-top: 10px;
+        border-top: 1px solid #dee2e6;
+    }
+`;
+
+// Добавляем стили в документ
+const styleSheet = document.createElement("style");
+styleSheet.textContent = modalStyles;
+document.head.appendChild(styleSheet);
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', async function() {
     await checkApiStatus();
     await loadModels();
     updateTemperatureDescription();
-    updateSessionInfo();
-    updateStatsPanel();
-    updateCompressionStats();
+
+    // Пытаемся загрузить последнюю сессию при старте
+    if (memoryEnabled) {
+        await loadLastSession();
+    } else {
+        updateSessionInfo();
+        updateStatsPanel();
+        updateCompressionStats();
+    }
+
+    // Остальной код...
+    refreshMemoryStats();
 
     document.getElementById('temperatureSelect').addEventListener('change', updateTemperatureDescription);
     document.getElementById('messageInput').addEventListener('keydown', function(e) {
@@ -429,7 +711,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.querySelectorAll('.mode-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    document.querySelector(`.mode-btn[onclick*="${currentMode}"]`).classList.add('active');
+
+    // Находим кнопку соответствующего режима
+    const currentModeBtn = document.querySelector(`.mode-btn[onclick*="${currentMode}"]`);
+    if (currentModeBtn) {
+        currentModeBtn.classList.add('active');
+    }
 
     document.getElementById('messageInput').focus();
 });
@@ -442,7 +729,6 @@ async function loadModels() {
             models = await response.json();
             renderModelButtons();
 
-            // Устанавливаем модель по умолчанию
             if (models[currentModel]) {
                 setModel(currentModel);
             }
@@ -471,7 +757,6 @@ function renderModelButtons() {
 function setModel(modelKey) {
     if (!models[modelKey] || isSendingMessage) return;
 
-    // Обновляем активную кнопку
     document.querySelectorAll('.model-btn').forEach(btn => {
         btn.classList.remove('active');
     });
@@ -480,7 +765,6 @@ function setModel(modelKey) {
     currentModel = modelKey;
     const model = models[modelKey];
 
-    // Обновляем информацию о модели
     document.getElementById('currentModel').textContent = model.name;
     document.getElementById('modelDescription').innerHTML = `
         <strong>${model.name}</strong><br>
@@ -493,7 +777,6 @@ function setModel(modelKey) {
 function setMode(mode) {
     if (currentMode === mode || isSendingMessage) return;
 
-    // Обновляем активные кнопки
     document.querySelectorAll('.mode-btn').forEach(btn => {
         btn.classList.remove('active');
     });
@@ -501,11 +784,9 @@ function setMode(mode) {
 
     currentMode = mode;
 
-    // Показываем/скрываем опцию JSON
     const jsonOption = document.getElementById('jsonOption');
     jsonOption.style.display = mode === 'default' ? 'block' : 'none';
 
-    // Обновляем плейсхолдер
     const input = document.getElementById('messageInput');
     if (mode === 'tz_collection') {
         input.placeholder = 'Расскажите о вашем проекте...';
@@ -533,7 +814,6 @@ async function toggleCompression() {
             compressionEnabled = data.enable_compression;
             status.textContent = compressionEnabled ? 'Компрессия включена' : 'Компрессия выключена';
 
-            // Показываем/скрываем бейдж
             const badge = document.getElementById('compressionBadge');
             badge.style.display = compressionEnabled ? 'inline-block' : 'none';
 
@@ -541,7 +821,7 @@ async function toggleCompression() {
         }
     } catch (error) {
         console.error('Ошибка переключения компрессии:', error);
-        toggle.checked = !toggle.checked; // Возвращаем предыдущее состояние
+        toggle.checked = !toggle.checked;
     }
 }
 
@@ -556,7 +836,6 @@ async function sendMessage() {
 
     if (!message) return;
 
-    // Добавляем сообщение пользователя
     addMessage('user', message);
     input.value = '';
     scrollToBottom();
@@ -583,23 +862,27 @@ async function sendMessage() {
         } else if (data.is_command) {
             addMessage('system', data.response);
         } else {
-            // Показываем событие компрессии если оно было
             if (data.compression && data.compression.occurred) {
                 showCompressionEvent(data);
             }
 
-            // Добавляем сообщение с анализом поведения
+            if (data.memory_enabled) {
+                showMemoryEvent(data);
+            }
+
             const showAnalysis = document.getElementById('showBehaviorAnalysis').checked;
             addMessageWithAnalysis('assistant', data.response, data, showAnalysis);
 
-            // Обновляем статистику
             requestCount++;
             updateStatsPanel(data.token_stats);
             updateCompressionStats(data.compression_stats || data.compression);
             updateCurrentStats(data);
+
+            if (data.memory_enabled) {
+                refreshMemoryStats();
+            }
         }
 
-        // Обновляем информацию о сессии
         updateSessionInfo();
 
     } catch (error) {
@@ -627,13 +910,27 @@ function showCompressionEvent(data) {
     container.appendChild(eventDiv);
 }
 
+// Показать событие памяти
+function showMemoryEvent(data) {
+    const container = document.getElementById('chatHistory');
+    const eventDiv = document.createElement('div');
+    eventDiv.className = 'memory-event';
+
+    eventDiv.innerHTML = `
+        <i class="fas fa-database"></i>
+        <strong>Данные сохранены во внешнюю память!</strong><br>
+        <small>Сессия: ${data.session_id?.substring(0, 8)}...</small>
+    `;
+
+    container.appendChild(eventDiv);
+}
+
 // Добавление сообщения с анализом поведения
 function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
     const container = document.getElementById('chatHistory');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}-message`;
 
-    // Основные метрики
     const inputTokens = data.input_tokens || 0;
     const outputTokens = data.output_tokens || 0;
     const totalTokens = inputTokens + outputTokens;
@@ -641,7 +938,6 @@ function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
     const cost = data.cost || 0;
     const executionTime = data.execution_time || 0;
 
-    // Добавляем информацию о компрессии если есть
     let compressionInfo = '';
     if (data.compression && data.compression.occurred) {
         compressionInfo = `
@@ -653,7 +949,15 @@ function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
         `;
     }
 
-    // Анализ поведения
+    let memoryInfo = '';
+    if (data.memory_enabled) {
+        memoryInfo = `
+            <div style="margin-top: 5px; padding: 5px; background: #f3e5f5; border-radius: 4px; font-size: 11px;">
+                <i class="fas fa-database"></i> Внешняя память: данные сохранены
+            </div>
+        `;
+    }
+
     let analysisHTML = '';
     if (showAnalysis && data.behavior_analysis) {
         const analysis = data.behavior_analysis;
@@ -712,6 +1016,7 @@ function addMessageWithAnalysis(role, content, data, showAnalysis = true) {
         </div>
         <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
         ${compressionInfo}
+        ${memoryInfo}
         <div class="message-metrics">
             <small>
                 <i class="fas fa-clock"></i> ${executionTime}с |
@@ -734,16 +1039,32 @@ function addMessage(role, content) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}-message`;
 
+    // Используем текущее время или время из данных сессии
+    const timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+    // Определяем иконку и заголовок в зависимости от роли
+    let icon = 'fa-user';
+    let title = 'Вы';
+
+    if (role === 'assistant') {
+        icon = 'fa-robot';
+        title = 'Ассистент';
+    } else if (role === 'system') {
+        icon = 'fa-info-circle';
+        title = 'Система';
+    }
+
     messageDiv.innerHTML = `
         <div class="message-header">
-            <i class="fas ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i>
-            <strong>${role === 'user' ? 'Вы' : 'Ассистент'}</strong>
-            <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+            <i class="fas ${icon}"></i>
+            <strong>${title}</strong>
+            <span class="message-time">${timestamp}</span>
         </div>
         <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
     `;
 
     container.appendChild(messageDiv);
+    scrollToBottom();
 }
 
 // Обновление панели статистики
@@ -754,7 +1075,6 @@ function updateStatsPanel(stats = null) {
         document.getElementById('totalTokens').textContent = (stats.total_input || 0) + (stats.total_output || 0);
         document.getElementById('totalCost').textContent = stats.total_cost ? stats.total_cost.toFixed(5) : '0.00000';
     } else {
-        // Загружаем статистику с сервера
         fetch('/get_session_info')
             .then(response => response.json())
             .then(data => {
@@ -777,13 +1097,11 @@ function updateCompressionStats(stats = null) {
         document.getElementById('tokensSaved').textContent = stats.tokens_saved || 0;
         document.getElementById('compressionRatio').textContent = stats.compression_ratio || 0 + '%';
 
-        // Показываем панель компрессии если есть статистика
         const panel = document.getElementById('compressionStats');
         if (stats.total_compressions > 0) {
             panel.style.display = 'block';
         }
     } else {
-        // Загружаем статистику с сервера
         fetch('/get_session_info')
             .then(response => response.json())
             .then(data => {
@@ -792,25 +1110,61 @@ function updateCompressionStats(stats = null) {
                     document.getElementById('tokensSaved').textContent = data.compression_stats.tokens_saved || 0;
                     document.getElementById('compressionRatio').textContent = data.compression_stats.compression_ratio || 0 + '%';
 
-                    // Показываем панель компрессии если есть статистика
                     const panel = document.getElementById('compressionStats');
                     if (data.compression_stats.total_compressions > 0) {
                         panel.style.display = 'block';
                     }
 
-                    // Обновляем состояние переключателя
                     if (data.compression_enabled !== undefined) {
                         compressionEnabled = data.compression_enabled;
                         document.getElementById('compressionToggle').checked = compressionEnabled;
                         document.getElementById('compressionStatus').textContent =
                             compressionEnabled ? 'Компрессия включена' : 'Компрессия выключена';
 
-                        // Показываем/скрываем бейдж
                         const badge = document.getElementById('compressionBadge');
                         badge.style.display = compressionEnabled ? 'inline-block' : 'none';
                     }
                 }
             });
+    }
+}
+
+// Обновление статистики памяти
+async function refreshMemoryStats() {
+    if (!memoryEnabled) return;
+
+    try {
+        const response = await fetch('/memory/stats');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                const stats = data.stats;
+                const container = document.getElementById('memoryStatsGrid');
+
+                container.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.total_sessions || 0}</div>
+                        <div class="stat-label">Сессий</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.total_messages || 0}</div>
+                        <div class="stat-label">Сообщений</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.total_compressed_histories || 0}</div>
+                        <div class="stat-label">Сжатий</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.database_size_mb || 0} МБ</div>
+                        <div class="stat-label">Размер БД</div>
+                    </div>
+                `;
+
+                document.getElementById('memoryStats').style.display = 'block';
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка обновления статистики памяти:', error);
     }
 }
 
@@ -831,8 +1185,22 @@ async function updateSessionInfo() {
             document.getElementById('historyCount').textContent = data.history_length || 0;
             if (data.temperature !== undefined) {
                 document.getElementById('currentTemperature').textContent = data.temperature;
-                document.getElementById('temperatureSelect').value = parseFloat(data.temperature);
+                const tempSelect = document.getElementById('temperatureSelect');
+                const tempValue = parseFloat(data.temperature);
+                if (!isNaN(tempValue)) {
+                    tempSelect.value = tempValue;
+                }
                 updateTemperatureDescription();
+            }
+            if (data.session_id) {
+                currentSessionId = data.session_id;
+            }
+            memoryEnabled = data.memory_enabled || false;
+            document.getElementById('memoryBadge').style.display = memoryEnabled ? 'inline-block' : 'none';
+
+            // Обновляем модель в интерфейсе
+            if (data.selected_model && models[data.selected_model]) {
+                setModel(data.selected_model);
             }
         }
     } catch (error) {
@@ -878,14 +1246,117 @@ async function showTokenStats() {
     }
 }
 
-// Показать статистику компрессии
-async function showCompressionStats() {
+// Показать статистику памяти
+async function showMemoryStats() {
     try {
         const response = await fetch('/send_message', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                message: '/compression_stats',
+                message: '/memory_stats',
+                model: currentModel,
+                temperature: parseFloat(document.getElementById('temperatureSelect').value)
+            })
+        });
+
+        const data = await response.json();
+        if (data.response) {
+            addMessage('system', data.response);
+            refreshMemoryStats();
+        }
+    } catch (error) {
+        console.error('Ошибка получения статистики памяти:', error);
+    }
+}
+
+// Загрузить список сессий
+async function loadSessionsList() {
+    if (!memoryEnabled) {
+        addMessage('system', '❌ Внешняя память не доступна');
+        return;
+    }
+
+    try {
+        const response = await fetch('/memory/sessions?limit=10');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                showSessionsModal(data.sessions);
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки списка сессий:', error);
+        addMessage('system', '❌ Ошибка загрузки списка сессий');
+    }
+}
+
+// Показать модальное окно с сессиями
+function showSessionsModal(sessions) {
+    const modal = document.getElementById('sessionsModal');
+    const listContainer = document.getElementById('sessionsList');
+
+    if (sessions.length === 0) {
+        listContainer.innerHTML = '<p>Нет сохраненных сессий</p>';
+    } else {
+        listContainer.innerHTML = sessions.map(session => `
+            <div class="session-item" onclick="loadSession('${session.session_id}')">
+                <div><strong>${session.session_id.substring(0, 8)}...</strong></div>
+                <div class="session-info">
+                    <span><i class="fas fa-comments"></i> ${session.message_count} сообщений</span>
+                    <span><i class="fas fa-hashtag"></i> ${session.total_tokens} токенов</span>
+                    <span><i class="fas fa-clock"></i> ${session.updated_at.substring(0, 16)}</span>
+                </div>
+                <div style="margin-top: 5px; font-size: 12px; color: #666;">
+                    <i class="fas fa-cog"></i> ${session.chat_mode} |
+                    <i class="fas fa-user"></i> ${session.current_role_name}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    modal.style.display = 'block';
+}
+
+// Закрыть модальное окно
+function closeSessionsModal() {
+    document.getElementById('sessionsModal').style.display = 'none';
+}
+
+// Загрузить сессию
+async function loadSession(sessionId) {
+    if (!memoryEnabled) return;
+
+    try {
+        const response = await fetch(`/memory/session/${sessionId}`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                closeSessionsModal();
+                addMessage('system', `✅ Сессия ${sessionId.substring(0, 8)}... загружена`);
+
+                // Можно добавить логику для полной загрузки сессии в интерфейс
+                // В реальном приложении нужно будет обновить состояние чата
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки сессии:', error);
+        addMessage('system', '❌ Ошибка загрузки сессии');
+    }
+}
+
+// Экспорт текущей сессии
+async function exportCurrentSession() {
+    if (!memoryEnabled) {
+        addMessage('system', '❌ Внешняя память не доступна');
+        return;
+    }
+
+    try {
+        const response = await fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: '/memory_export',
                 model: currentModel,
                 temperature: parseFloat(document.getElementById('temperatureSelect').value)
             })
@@ -896,7 +1367,35 @@ async function showCompressionStats() {
             addMessage('system', data.response);
         }
     } catch (error) {
-        console.error('Ошибка получения статистики компрессии:', error);
+        console.error('Ошибка экспорта сессии:', error);
+        addMessage('system', '❌ Ошибка экспорта сессии');
+    }
+}
+
+// Очистка старых сессий
+async function cleanupOldSessions() {
+    if (!memoryEnabled) {
+        addMessage('system', '❌ Внешняя память не доступна');
+        return;
+    }
+
+    if (!confirm('Удалить сессии старше 30 дней?')) return;
+
+    try {
+        const response = await fetch('/memory/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ days_old: 30 })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            addMessage('system', `✅ ${data.message}`);
+            refreshMemoryStats();
+        }
+    } catch (error) {
+        console.error('Ошибка очистки сессий:', error);
+        addMessage('system', '❌ Ошибка очистки сессий');
     }
 }
 
@@ -933,6 +1432,10 @@ async function checkApiStatus() {
             statusDot.style.backgroundColor = '#FF5252';
             statusText.textContent = 'API не настроено';
         }
+
+        if (data.memory_enabled) {
+            memoryEnabled = true;
+        }
     } catch (error) {
         console.error('Ошибка проверки статуса API:', error);
     }
@@ -956,11 +1459,13 @@ async function clearHistory() {
             });
             updateSessionInfo();
 
-            // Добавляем сообщение об очистке
             addMessage('system', '🗑️ История диалога, компрессия и статистика очищены.');
 
-            // Скрываем панель компрессии
             document.getElementById('compressionStats').style.display = 'none';
+
+            if (memoryEnabled) {
+                refreshMemoryStats();
+            }
         }
     } catch (error) {
         console.error('Ошибка очистки истории:', error);
@@ -975,7 +1480,6 @@ async function exportHistory() {
         type: msg.classList.contains('user-message') ? 'user' : 'assistant'
     }));
 
-    // Получаем статистику
     const statsResponse = await fetch('/get_session_info');
     const statsData = await statsResponse.json();
 
@@ -988,7 +1492,9 @@ async function exportHistory() {
             model: currentModel,
             mode: currentMode,
             total_requests: requestCount,
-            compression_enabled: compressionEnabled
+            compression_enabled: compressionEnabled,
+            memory_enabled: memoryEnabled,
+            session_id: currentSessionId
         }
     };
 
@@ -996,7 +1502,7 @@ async function exportHistory() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chat_with_compression_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `chat_export_${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1007,6 +1513,14 @@ async function exportHistory() {
 function scrollToBottom() {
     const chatHistory = document.getElementById('chatHistory');
     chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+// Закрыть модальное окно при клике вне его
+window.onclick = function(event) {
+    const modal = document.getElementById('sessionsModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
 }
 </script>
 </body>

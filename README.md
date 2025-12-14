@@ -50,3 +50,9 @@ video - https://disk.yandex.ru/d/nfbE8imHKsu-VQ
 ![](res/task9.png)
 
 video - https://disk.yandex.ru/d/-0xa_kAGdEkAVQ
+
+## Task #10
+
+![](res/task10.png)
+
+video - https://disk.yandex.ru/d/MqkkwSnb-MWENQ
